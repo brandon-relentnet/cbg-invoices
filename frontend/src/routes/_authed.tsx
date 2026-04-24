@@ -1,54 +1,39 @@
 import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useLogto } from "@logto/react";
+import { useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
-import { useAuth } from "@/lib/auth";
+import { callbackUri } from "@/lib/auth";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
 });
 
-// Module-level flag — persists across component remounts (StrictMode's
-// double-invoke, route changes) but resets on full page loads (which is
-// what we want, since signIn() triggers a full-page redirect to Logto).
+// Module-level so it survives StrictMode's double-effect invocation and
+// route-change remounts. A full page navigation (which signIn() triggers)
+// reloads the module and resets this flag naturally.
 let signInTriggered = false;
 
-// Grace period before we conclude the user really is signed out. When
-// refreshing with an active session, the LogtoProvider briefly reports
-// (isLoading=false, isAuthenticated=false) before it finishes restoring
-// the session from localStorage. Without this delay, we'd kick off a
-// redirect-to-Logto loop that produces a visible flash.
-const AUTH_DECISION_DELAY_MS = 500;
-
 function AuthedLayout() {
-  const { isAuthenticated, isLoading, signIn } = useAuth();
-  const [waited, setWaited] = useState(false);
+  // The official Logto React pattern: trust isLoading + isAuthenticated.
+  // LogtoProvider starts with isLoading=true (see @logto/react provider
+  // source — loadingCount initialises to 1) so the effect below won't
+  // fire until the SDK has definitively resolved the session.
+  const { isAuthenticated, isLoading, signIn } = useLogto();
 
   useEffect(() => {
-    // If Logto has already reported a definitive state, we don't need the delay
-    if (isAuthenticated || isLoading) {
-      setWaited(true);
-      return;
-    }
-    // Otherwise wait a moment before trusting "not authenticated"
-    const t = setTimeout(() => setWaited(true), AUTH_DECISION_DELAY_MS);
-    return () => clearTimeout(t);
-  }, [isAuthenticated, isLoading]);
-
-  useEffect(() => {
-    if (!waited) return;
     if (isLoading || isAuthenticated) return;
     if (signInTriggered) return;
     signInTriggered = true;
-    void signIn();
-    // Effect intentionally excludes `signIn` — its reference is stable
-    // (memoized in useAuth) but keeping the dep would re-fire on unrelated
-    // re-renders. See fix-commit for the infinite-loop rationale.
+    void signIn(callbackUri());
+    // `signIn` is NOT in deps on purpose — @logto/react returns a fresh
+    // reference each render and including it re-fires the effect in a
+    // loop. The two primitive flags are what actually matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waited, isAuthenticated, isLoading]);
+  }, [isAuthenticated, isLoading]);
 
-  if (!waited || isLoading || !isAuthenticated) {
-    // Visually identical to the splash screen in index.html so the
-    // pre-hydration splash → post-hydration loader is a no-op transition.
+  if (isLoading || !isAuthenticated) {
+    // Visually identical to the inline splash in index.html so the
+    // HTML splash → React splash transition is invisible.
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-4 bg-stone">
         <span className="text-[0.6875rem] font-bold uppercase tracking-[0.2em] text-amber">

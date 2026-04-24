@@ -1,9 +1,11 @@
-import { useAuth } from "@/lib/auth";
-import { Button } from "@/components/ui/Button";
+import { useLogto } from "@logto/react";
 import { ArrowRightEndOnRectangleIcon } from "@heroicons/react/24/outline";
+import { Button } from "@/components/ui/Button";
+import { postSignOutUri, useUser } from "@/lib/auth";
 
 export function TopBar() {
-  const { user, signOut } = useAuth();
+  const { signOut } = useLogto();
+  const user = useUser();
 
   return (
     <header className="h-14 bg-white border-b border-stone/80 flex items-center justify-between px-6 flex-shrink-0">
@@ -18,7 +20,12 @@ export function TopBar() {
             <span className="text-navy font-semibold">{user.name ?? user.email}</span>
           </div>
         )}
-        <Button variant="ghost" size="sm" onClick={signOut} title="Sign out">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void signOut(postSignOutUri())}
+          title="Sign out"
+        >
           <ArrowRightEndOnRectangleIcon className="h-4 w-4" />
           Sign out
         </Button>
