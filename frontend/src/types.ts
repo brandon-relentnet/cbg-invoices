@@ -3,6 +3,7 @@ export type InvoiceStatus =
   | "extracting"
   | "extraction_failed"
   | "ready_for_review"
+  | "pending"
   | "approved"
   | "posted_to_qbo"
   | "rejected";
@@ -48,6 +49,10 @@ export interface Invoice {
   qbo_bill_id: string | null;
   qbo_posted_at: string | null;
   qbo_post_error: string | null;
+  assigned_to_id: string | null;
+  assigned_to_email: string | null;
+  assigned_to_name: string | null;
+  assigned_at: string | null;
 }
 
 export interface InvoiceListResponse {

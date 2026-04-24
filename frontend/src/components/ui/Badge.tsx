@@ -12,6 +12,8 @@ type Tone =
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
   children: ReactNode;
+  /** Show a leading amber dot — useful to distinguish same-tone statuses. */
+  dot?: boolean;
 }
 
 const toneClasses: Record<Tone, string> = {
@@ -23,16 +25,28 @@ const toneClasses: Record<Tone, string> = {
   navy: "bg-navy text-stone border border-amber",
 };
 
-export function Badge({ tone = "slate", className, children, ...props }: BadgeProps) {
+export function Badge({
+  tone = "slate",
+  dot = false,
+  className,
+  children,
+  ...props
+}: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
+        "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
         toneClasses[tone],
         className,
       )}
       {...props}
     >
+      {dot && (
+        <span
+          aria-hidden
+          className="inline-block h-1.5 w-1.5 rounded-full bg-amber"
+        />
+      )}
       {children}
     </span>
   );

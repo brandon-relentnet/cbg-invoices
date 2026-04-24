@@ -15,6 +15,7 @@ build/
 *.log
 .vite/
 .cache/
+.pnpm-store/
 
 # Python
 __pycache__/

@@ -1,74 +1,153 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ExclamationTriangleIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowPathIcon,
+  ArrowUturnLeftIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  ExclamationTriangleIcon,
+  PaperAirplaneIcon,
+  PencilSquareIcon,
+  UserCircleIcon,
+  UserPlusIcon,
+  XCircleIcon,
+} from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
+import { SplitButton, type SplitButtonOption } from "@/components/ui/SplitButton";
 import { StatusBadge } from "@/components/invoices/StatusBadge";
 import { PdfViewer } from "@/components/invoices/PdfViewer";
 import { ExtractedFieldsForm } from "@/components/invoices/ExtractedFieldsForm";
+import { InvoiceSummary } from "@/components/invoices/InvoiceSummary";
+import { AssigneePicker } from "@/components/invoices/AssigneePicker";
 import {
+  useApproveAndPostInvoice,
   useApproveInvoice,
+  useAssignInvoice,
   useInvoice,
-  useProjects,
   usePatchInvoice,
+  usePostInvoice,
+  useProjects,
   useReextractInvoice,
   useRejectInvoice,
-  useRetryQbo,
+  useSendToPending,
+  useUnapproveInvoice,
+  useUnassignInvoice,
   useVendors,
   type InvoicePatchPayload,
 } from "@/lib/invoices";
+import type { TeamMember } from "@/lib/users";
+import type { Invoice, Project, Vendor } from "@/types";
 import { useQboStatus } from "@/lib/qbo";
+import { formatDate } from "@/lib/format";
 
 export const Route = createFileRoute("/_authed/invoices_/$id")({
   component: InvoiceDetailPage,
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// The review page has three macro-modes:
+//   • "review"  — status=ready_for_review (or extraction_failed). Editable form.
+//   • "pending" — status=pending. Read-only summary + Edit button. Can still
+//                 be approved or reassigned.
+//   • "locked"  — status=approved / posted_to_qbo / rejected. Read-only
+//                 summary + Edit for approved (which unapproves it first).
+// ──────────────────────────────────────────────────────────────────────────
+
+type Mode = "review" | "pending" | "locked";
+
 function InvoiceDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
 
-  const invoiceQuery = useInvoice(id);
+  // Short burst-poll after a Post action so we see status flip to posted_to_qbo
+  const [burstPoll, setBurstPoll] = useState(false);
+  const invoiceQuery = useInvoice(id, { burstPoll });
   const vendorsQuery = useVendors();
   const projectsQuery = useProjects();
   const qboQuery = useQboStatus();
 
   const patch = usePatchInvoice(id);
   const approve = useApproveInvoice(id);
+  const approveAndPost = useApproveAndPostInvoice(id);
+  const postOnly = usePostInvoice(id);
+  const sendToPending = useSendToPending(id);
+  const unapprove = useUnapproveInvoice(id);
+  const assign = useAssignInvoice(id);
+  const unassign = useUnassignInvoice(id);
   const reject = useRejectInvoice(id);
   const reextract = useReextractInvoice(id);
-  const retryQbo = useRetryQbo(id);
 
   const pending = useRef<InvoicePatchPayload | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [forceEdit, setForceEdit] = useState(false);
+
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState(false);
 
-  // Keyboard shortcuts: ⌘+Enter approve, ⌘+R reject (actually Cmd+Shift+R to avoid browser reload)
+  // Assignment modals — one flow per action that needs an assignee.
+  const [assignFlow, setAssignFlow] = useState<
+    null | "approve-and-assign" | "pending-with-assign" | "reassign"
+  >(null);
+
+  const invoice = invoiceQuery.data;
+
+  const mode: Mode = useMemo(() => {
+    if (!invoice) return "review";
+    if (
+      invoice.status === "ready_for_review" ||
+      invoice.status === "extraction_failed" ||
+      invoice.status === "received" ||
+      invoice.status === "extracting"
+    ) {
+      return "review";
+    }
+    if (invoice.status === "pending") return "pending";
+    return "locked";
+  }, [invoice]);
+
+  const showEditor = mode === "review" || forceEdit;
+
+  // Stop the burst poll once status leaves APPROVED (success or error settled)
+  useEffect(() => {
+    if (!invoice) return;
+    if (burstPoll && invoice.status !== "approved") {
+      setBurstPoll(false);
+    }
+  }, [invoice?.status, burstPoll]);
+
+  // Keyboard shortcuts — context-aware
   useEffect(() => {
     function handler(e: KeyboardEvent) {
+      if (!invoice) return;
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
-      if (e.key === "Enter") {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        void handleApprove();
-      }
-      if (e.shiftKey && (e.key === "R" || e.key === "r")) {
+        if (mode === "review") void handleApprove();
+        else if (mode === "pending") void handleApprove();
+        else if (invoice.status === "approved") void handlePost();
+      } else if (e.key === "Enter" && e.shiftKey) {
+        e.preventDefault();
+        if (mode === "review" || mode === "pending") void handleApproveAndPost();
+      } else if (e.shiftKey && (e.key === "R" || e.key === "r")) {
         e.preventDefault();
         setShowRejectModal(true);
+      } else if (e.shiftKey && (e.key === "P" || e.key === "p")) {
+        e.preventDefault();
+        if (mode === "review") void handleSendToPending(null);
       }
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoiceQuery.data]);
+  }, [invoice, mode]);
 
   if (invoiceQuery.isLoading) {
-    return (
-      <div className="py-20 text-center text-slate-500 text-sm">Loading invoice…</div>
-    );
+    return <div className="py-20 text-center text-slate-500 text-sm">Loading invoice…</div>;
   }
-  if (invoiceQuery.error || !invoiceQuery.data) {
+  if (invoiceQuery.error || !invoice) {
     return (
       <div className="py-20 text-center">
         <p className="text-red-700 text-sm">
@@ -81,23 +160,87 @@ function InvoiceDetailPage() {
     );
   }
 
-  const invoice = invoiceQuery.data;
-  const editable =
-    invoice.status === "ready_for_review" ||
-    invoice.status === "extraction_failed" ||
-    invoice.status === "approved";
   const qboConnected = qboQuery.data?.connected ?? false;
+  const busy =
+    patch.isPending ||
+    approve.isPending ||
+    approveAndPost.isPending ||
+    postOnly.isPending ||
+    sendToPending.isPending ||
+    unapprove.isPending ||
+    assign.isPending ||
+    unassign.isPending ||
+    reject.isPending ||
+    reextract.isPending;
 
-  async function handleSave() {
-    if (!pending.current) return;
-    await patch.mutateAsync(pending.current);
-    setDirty(false);
+  async function flushDirty() {
+    if (dirty && pending.current) {
+      await patch.mutateAsync(pending.current);
+      setDirty(false);
+    }
   }
 
   async function handleApprove() {
-    if (dirty && pending.current) await patch.mutateAsync(pending.current);
-    setDirty(false);
+    await flushDirty();
     await approve.mutateAsync();
+    setForceEdit(false);
+  }
+
+  async function handleApproveAndPost() {
+    if (!qboConnected) return;
+    await flushDirty();
+    await approveAndPost.mutateAsync();
+    setBurstPoll(true);
+    setForceEdit(false);
+  }
+
+  async function handleApproveAndAssign(member: TeamMember | null) {
+    if (!member) {
+      setAssignFlow(null);
+      return;
+    }
+    await flushDirty();
+    await approve.mutateAsync();
+    await assign.mutateAsync({
+      user_id: member.id,
+      user_email: member.email,
+      user_name: member.name,
+    });
+    setAssignFlow(null);
+    setForceEdit(false);
+  }
+
+  async function handleSendToPending(assignee: TeamMember | null) {
+    await flushDirty();
+    await sendToPending.mutateAsync(
+      assignee
+        ? {
+            user_id: assignee.id,
+            user_email: assignee.email,
+            user_name: assignee.name,
+          }
+        : null,
+    );
+    setAssignFlow(null);
+    setForceEdit(false);
+  }
+
+  async function handlePost() {
+    await postOnly.mutateAsync();
+    setBurstPoll(true);
+  }
+
+  async function handleReassign(member: TeamMember | null) {
+    if (!member) {
+      setAssignFlow(null);
+      return;
+    }
+    await assign.mutateAsync({
+      user_id: member.id,
+      user_email: member.email,
+      user_name: member.name,
+    });
+    setAssignFlow(null);
   }
 
   async function handleReject() {
@@ -105,6 +248,47 @@ function InvoiceDetailPage() {
     await reject.mutateAsync(rejectReason.trim());
     setShowRejectModal(false);
     setRejectReason("");
+  }
+
+  async function handleUnapprove() {
+    await unapprove.mutateAsync();
+    setForceEdit(true);
+  }
+
+  async function handleEdit() {
+    // For APPROVED/PENDING, this unapproves first. For POSTED_TO_QBO, we don't
+    // allow edits (no button rendered). For extraction_failed the form is
+    // already editable.
+    if (invoice?.status === "approved" || invoice?.status === "pending") {
+      await handleUnapprove();
+    } else {
+      setForceEdit(true);
+    }
+  }
+
+  const pickerTitle: Record<NonNullable<typeof assignFlow>, string> = {
+    "approve-and-assign": "Approve & assign",
+    "pending-with-assign": "Send to pending",
+    reassign: "Reassign invoice",
+  };
+  const pickerDescription: Record<NonNullable<typeof assignFlow>, string> = {
+    "approve-and-assign": "Approve this invoice and put it on someone else's plate.",
+    "pending-with-assign":
+      "Move this invoice to Pending — with or without an assignee to handle it.",
+    reassign: "Move this invoice to a different team member.",
+  };
+  const pickerConfirm: Record<NonNullable<typeof assignFlow>, string> = {
+    "approve-and-assign": "Approve & assign",
+    "pending-with-assign": "Send to pending",
+    reassign: "Reassign",
+  };
+  const pickerAllowEmpty = assignFlow === "pending-with-assign";
+
+  async function onPickerSelect(member: TeamMember | null) {
+    if (!assignFlow) return;
+    if (assignFlow === "approve-and-assign") await handleApproveAndAssign(member);
+    else if (assignFlow === "pending-with-assign") await handleSendToPending(member);
+    else if (assignFlow === "reassign") await handleReassign(member);
   }
 
   return (
@@ -123,18 +307,9 @@ function InvoiceDetailPage() {
         }
       />
 
-      {/* Error banners */}
-      {invoice.status === "extraction_failed" && (
-        <div className="mb-4 p-4 bg-red-50 border-l-2 border-red-700 flex items-start gap-3">
-          <ExclamationTriangleIcon className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <div className="text-sm font-semibold text-red-900">Extraction failed</div>
-            {invoice.extraction_error && (
-              <div className="text-xs text-red-800 mt-1 font-mono break-all">
-                {invoice.extraction_error}
-              </div>
-            )}
-          </div>
+      {/* Context banners */}
+      <StatusBanner invoice={invoice} qboConnected={qboConnected}>
+        {invoice.status === "extraction_failed" && (
           <Button
             variant="secondary"
             size="sm"
@@ -144,44 +319,67 @@ function InvoiceDetailPage() {
             <ArrowPathIcon className="h-4 w-4" />
             Re-extract
           </Button>
-        </div>
-      )}
-      {invoice.status === "approved" && invoice.qbo_post_error && (
-        <div className="mb-4 p-4 bg-amber/10 border-l-2 border-amber flex items-start gap-3">
-          <ExclamationTriangleIcon className="h-5 w-5 text-amber flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <div className="text-sm font-semibold text-navy">QBO posting failed</div>
-            <div className="text-xs text-graphite mt-1 font-mono break-all">
-              {invoice.qbo_post_error}
-            </div>
-          </div>
+        )}
+        {invoice.status === "approved" && invoice.qbo_post_error && (
           <Button
             variant="primary"
             size="sm"
-            onClick={() => retryQbo.mutate()}
-            loading={retryQbo.isPending}
+            onClick={handlePost}
+            loading={postOnly.isPending}
           >
+            <ArrowPathIcon className="h-4 w-4" />
             Retry post to QBO
           </Button>
+        )}
+      </StatusBanner>
+
+      {/* Assignment chip (visible any time the invoice has one) */}
+      {invoice.assigned_to_id && (
+        <div className="mb-4 inline-flex items-center gap-2 text-xs bg-white border border-slate-300 px-3 py-1.5">
+          <UserCircleIcon className="h-4 w-4 text-slate-500" />
+          <span className="text-slate-500 uppercase tracking-wider text-[10px] font-semibold">
+            Assigned to
+          </span>
+          <span className="text-graphite font-medium">
+            {invoice.assigned_to_name || invoice.assigned_to_email || invoice.assigned_to_id}
+          </span>
+          {(mode === "review" || mode === "pending" || invoice.status === "approved") && (
+            <>
+              <button
+                type="button"
+                onClick={() => setAssignFlow("reassign")}
+                className="ml-2 text-slate-400 hover:text-navy"
+              >
+                Change
+              </button>
+              <button
+                type="button"
+                onClick={() => unassign.mutate()}
+                className="text-slate-400 hover:text-red-700"
+              >
+                Remove
+              </button>
+            </>
+          )}
         </div>
       )}
 
       {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <div className="lg:col-span-3 h-[calc(100vh-16rem)] min-h-[600px]">
-          <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url} />
+          <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url ?? undefined} />
         </div>
 
         <div className="lg:col-span-2">
-          {invoice.status === "extracting" ? (
-            <div className="text-center py-16">
+          {invoice.status === "extracting" || invoice.status === "received" ? (
+            <div className="text-center py-16 bg-white border-l-2 border-amber/60">
               <div
                 aria-hidden
                 className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-navy border-r-transparent"
               />
               <p className="mt-3 text-sm text-slate-600">Extracting fields with Claude…</p>
             </div>
-          ) : (
+          ) : showEditor ? (
             <ExtractedFieldsForm
               invoice={invoice}
               vendors={vendorsQuery.data?.vendors ?? []}
@@ -190,45 +388,48 @@ function InvoiceDetailPage() {
                 pending.current = p;
                 setDirty(true);
               }}
-              disabled={!editable || invoice.status === "posted_to_qbo"}
+              disabled={false}
+            />
+          ) : (
+            <ReadOnlyView
+              invoice={invoice}
+              vendors={vendorsQuery.data?.vendors ?? []}
+              projects={projectsQuery.data?.projects ?? []}
+              onEdit={handleEdit}
+              onReassign={() => setAssignFlow("reassign")}
+              editBusy={unapprove.isPending}
             />
           )}
         </div>
       </div>
 
       {/* Sticky action footer */}
-      {editable && (
-        <div className="sticky bottom-0 mt-8 -mx-8 px-8 py-4 bg-stone border-t-2 border-navy flex items-center justify-between gap-3 z-20">
-          <div className="text-xs text-slate-600">
-            {dirty ? "You have unsaved edits." : "All changes saved."}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="destructive"
-              onClick={() => setShowRejectModal(true)}
-              title="Reject (⌘+Shift+R)"
-            >
-              Reject
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={handleSave}
-              disabled={!dirty}
-              loading={patch.isPending}
-            >
-              Save draft
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleApprove}
-              disabled={!qboConnected || invoice.status === "posted_to_qbo"}
-              loading={approve.isPending || patch.isPending}
-              title={!qboConnected ? "Connect QBO in Settings first" : "Approve & post (⌘+Enter)"}
-            >
-              Approve & Post to QBO
-            </Button>
-          </div>
-        </div>
+      {(showEditor || mode === "pending" || invoice.status === "approved") && (
+        <ActionFooter
+          invoice={invoice}
+          dirty={dirty}
+          busy={busy}
+          qboConnected={qboConnected}
+          forceEdit={forceEdit}
+          showEditor={showEditor}
+          onSave={async () => {
+            await flushDirty();
+          }}
+          onCancelEdit={() => {
+            setForceEdit(false);
+            setDirty(false);
+            pending.current = null;
+          }}
+          onReject={() => setShowRejectModal(true)}
+          onApprove={handleApprove}
+          onApproveAndPost={handleApproveAndPost}
+          onApproveAndAssign={() => setAssignFlow("approve-and-assign")}
+          onSendToPending={() => handleSendToPending(null)}
+          onSendToPendingWithAssign={() => setAssignFlow("pending-with-assign")}
+          onPost={handlePost}
+          onUnapprove={handleUnapprove}
+          patchPending={patch.isPending}
+        />
       )}
 
       {/* Reject modal */}
@@ -238,14 +439,14 @@ function InvoiceDetailPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-graphite/60 flex items-center justify-center z-50"
+            className="fixed inset-0 bg-graphite/60 flex items-center justify-center z-50 p-4"
             onClick={() => setShowRejectModal(false)}
           >
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 20, opacity: 0 }}
-              className="bg-white w-full max-w-md mx-4 border-t-4 border-amber"
+              className="bg-white w-full max-w-md border-t-4 border-amber"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="p-6">
@@ -279,6 +480,349 @@ function InvoiceDetailPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Assignee picker (shared for all assign flows) */}
+      <AssigneePicker
+        open={assignFlow !== null}
+        title={assignFlow ? pickerTitle[assignFlow] : ""}
+        description={assignFlow ? pickerDescription[assignFlow] : undefined}
+        confirmLabel={assignFlow ? pickerConfirm[assignFlow] : undefined}
+        allowEmpty={pickerAllowEmpty}
+        loading={busy}
+        onClose={() => setAssignFlow(null)}
+        onSelect={onPickerSelect}
+      />
     </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Status banner — context-sensitive feedback above the two columns.
+// ──────────────────────────────────────────────────────────────────────────
+
+function StatusBanner({
+  invoice,
+  qboConnected,
+  children,
+}: {
+  invoice: Invoice;
+  qboConnected: boolean;
+  children?: React.ReactNode;
+}) {
+  const base =
+    "mb-4 p-4 border-l-2 flex items-start gap-3";
+  if (invoice.status === "extraction_failed") {
+    return (
+      <div className={`${base} bg-red-50 border-red-700`}>
+        <ExclamationTriangleIcon className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-red-900">Extraction failed</div>
+          {invoice.extraction_error && (
+            <div className="text-xs text-red-800 mt-1 font-mono break-all">
+              {invoice.extraction_error}
+            </div>
+          )}
+        </div>
+        {children}
+      </div>
+    );
+  }
+  if (invoice.status === "approved" && invoice.qbo_post_error) {
+    return (
+      <div className={`${base} bg-amber/10 border-amber`}>
+        <ExclamationTriangleIcon className="h-5 w-5 text-amber flex-shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-navy">QBO posting failed</div>
+          <div className="text-xs text-graphite mt-1 font-mono break-all">
+            {invoice.qbo_post_error}
+          </div>
+        </div>
+        {children}
+      </div>
+    );
+  }
+  if (invoice.status === "approved" && !qboConnected) {
+    return (
+      <div className={`${base} bg-amber/10 border-amber`}>
+        <ClockIcon className="h-5 w-5 text-amber flex-shrink-0 mt-0.5" />
+        <div className="flex-1 text-sm text-navy">
+          <strong>Approved.</strong> Connect QuickBooks to post, or click{" "}
+          <em>Post to QBO</em> once connected.
+        </div>
+      </div>
+    );
+  }
+  if (invoice.status === "posted_to_qbo") {
+    return (
+      <div className={`${base} bg-green-50 border-green-700`}>
+        <CheckCircleIcon className="h-5 w-5 text-green-700 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 text-sm text-green-900">
+          <strong>Posted to QBO</strong>
+          {invoice.qbo_bill_id && (
+            <> as bill #{invoice.qbo_bill_id}</>
+          )}
+          {invoice.qbo_posted_at && <> on {formatDate(invoice.qbo_posted_at)}</>}
+          {invoice.reviewed_by_email && <> · reviewed by {invoice.reviewed_by_email}</>}.
+        </div>
+      </div>
+    );
+  }
+  if (invoice.status === "rejected") {
+    return (
+      <div className={`${base} bg-red-50 border-red-700`}>
+        <XCircleIcon className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 text-sm text-red-900">
+          <strong>Rejected</strong>
+          {invoice.reviewed_by_email && <> by {invoice.reviewed_by_email}</>}
+          {invoice.reviewed_at && <> on {formatDate(invoice.reviewed_at)}</>}.
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Read-only view — summary panel shown when the invoice is past review.
+// ──────────────────────────────────────────────────────────────────────────
+
+function ReadOnlyView({
+  invoice,
+  vendors,
+  projects,
+  onEdit,
+  onReassign,
+  editBusy,
+}: {
+  invoice: Invoice;
+  vendors: Vendor[];
+  projects: Project[];
+  onEdit: () => void;
+  onReassign: () => void;
+  editBusy: boolean;
+}) {
+  const canEdit =
+    invoice.status !== "posted_to_qbo" && invoice.status !== "rejected";
+  return (
+    <div className="space-y-4">
+      {canEdit && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onEdit}
+            loading={editBusy}
+            title={
+              invoice.status === "approved"
+                ? "Unapproves and reopens the form"
+                : invoice.status === "pending"
+                  ? "Reopens the form for edits"
+                  : "Edit fields"
+            }
+          >
+            <PencilSquareIcon className="h-4 w-4" />
+            Edit
+          </Button>
+          {invoice.status === "pending" && !invoice.assigned_to_id && (
+            <Button variant="ghost" size="sm" onClick={onReassign}>
+              <UserPlusIcon className="h-4 w-4" />
+              Assign to…
+            </Button>
+          )}
+        </div>
+      )}
+      <InvoiceSummary invoice={invoice} vendors={vendors} projects={projects} />
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Action footer — split-button layout. Primary action depends on status.
+// ──────────────────────────────────────────────────────────────────────────
+
+interface FooterProps {
+  invoice: Invoice;
+  dirty: boolean;
+  busy: boolean;
+  qboConnected: boolean;
+  forceEdit: boolean;
+  showEditor: boolean;
+  onSave: () => void;
+  onCancelEdit: () => void;
+  onReject: () => void;
+  onApprove: () => void;
+  onApproveAndPost: () => void;
+  onApproveAndAssign: () => void;
+  onSendToPending: () => void;
+  onSendToPendingWithAssign: () => void;
+  onPost: () => void;
+  onUnapprove: () => void;
+  patchPending: boolean;
+}
+
+function ActionFooter(props: FooterProps) {
+  const {
+    invoice,
+    dirty,
+    busy,
+    qboConnected,
+    forceEdit,
+    showEditor,
+    onSave,
+    onCancelEdit,
+    onReject,
+    onApprove,
+    onApproveAndPost,
+    onApproveAndAssign,
+    onSendToPending,
+    onSendToPendingWithAssign,
+    onPost,
+    onUnapprove,
+    patchPending,
+  } = props;
+
+  // Pick the primary action based on status
+  let primary: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+    disabledReason?: string;
+    variant?: "primary" | "secondary";
+  };
+  let options: SplitButtonOption[] = [];
+
+  if (invoice.status === "ready_for_review" || invoice.status === "extraction_failed") {
+    primary = {
+      label: "Approve",
+      onClick: onApprove,
+    };
+    options = [
+      {
+        label: "Approve & Post to QBO",
+        description: qboConnected
+          ? "Sends to QuickBooks immediately"
+          : "Connect QuickBooks in Settings first",
+        onSelect: onApproveAndPost,
+        disabled: !qboConnected,
+        icon: <PaperAirplaneIcon className="h-4 w-4" />,
+      },
+      {
+        label: "Approve & assign to…",
+        description: "Approve and put it on someone's plate",
+        onSelect: onApproveAndAssign,
+        icon: <UserPlusIcon className="h-4 w-4" />,
+      },
+      { divider: true, label: "", onSelect: () => {} },
+      {
+        label: "Send to Pending",
+        description: "Park for later — no assignee",
+        onSelect: onSendToPending,
+        icon: <ClockIcon className="h-4 w-4" />,
+      },
+      {
+        label: "Send to Pending (with assignee)",
+        description: "Park and assign to someone specific",
+        onSelect: onSendToPendingWithAssign,
+        icon: <UserPlusIcon className="h-4 w-4" />,
+      },
+    ];
+  } else if (invoice.status === "pending") {
+    primary = { label: "Approve", onClick: onApprove };
+    options = [
+      {
+        label: "Approve & Post to QBO",
+        description: qboConnected ? undefined : "Connect QuickBooks in Settings first",
+        onSelect: onApproveAndPost,
+        disabled: !qboConnected,
+        icon: <PaperAirplaneIcon className="h-4 w-4" />,
+      },
+      {
+        label: "Send back to Review",
+        description: "Re-open the editable form",
+        onSelect: onUnapprove,
+        icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
+      },
+    ];
+  } else if (invoice.status === "approved") {
+    primary = {
+      label: "Post to QBO",
+      onClick: onPost,
+      disabled: !qboConnected,
+      disabledReason: "Connect QuickBooks in Settings first",
+    };
+    options = [
+      {
+        label: "Send to Pending",
+        description: "Park instead of posting",
+        onSelect: onSendToPending,
+        icon: <ClockIcon className="h-4 w-4" />,
+      },
+      {
+        label: "Unapprove",
+        description: "Revert to Needs Review",
+        onSelect: onUnapprove,
+        icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
+      },
+    ];
+  } else {
+    // posted_to_qbo / rejected — no footer shown
+    return null;
+  }
+
+  const rejectVisible =
+    invoice.status !== "posted_to_qbo" && invoice.status !== "rejected";
+
+  // When forceEdit is on for an already-approved invoice, show an edit-mode
+  // footer instead — "Save and re-approve" etc.
+  const isReapproving = forceEdit && invoice.status === "approved";
+
+  return (
+    <div className="sticky bottom-0 mt-8 -mx-8 px-8 py-4 bg-stone border-t-2 border-navy flex items-center justify-between gap-3 flex-wrap z-20">
+      <div className="flex items-center gap-3 text-xs text-slate-600">
+        {showEditor ? (
+          dirty ? (
+            <span>
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber align-middle mr-2" />
+              Unsaved edits
+            </span>
+          ) : (
+            "All changes saved."
+          )
+        ) : (
+          "Status: " + invoice.status.replace(/_/g, " ")
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {isReapproving && (
+          <Button variant="ghost" onClick={onCancelEdit}>
+            Cancel
+          </Button>
+        )}
+        {rejectVisible && (
+          <Button variant="destructive" onClick={onReject} title="Reject (⌘+Shift+R)">
+            Reject
+          </Button>
+        )}
+        {showEditor && (
+          <Button
+            variant="secondary"
+            onClick={onSave}
+            disabled={!dirty}
+            loading={patchPending}
+          >
+            Save draft
+          </Button>
+        )}
+        <SplitButton
+          primaryLabel={primary.label}
+          onPrimary={primary.onClick}
+          options={options}
+          variant="primary"
+          disabled={primary.disabled || busy}
+          title={primary.disabled ? primary.disabledReason : undefined}
+          loading={busy && !patchPending}
+        />
+      </div>
+    </div>
   );
 }

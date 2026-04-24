@@ -43,7 +43,7 @@ export function useInvoices(params: ListParams) {
   });
 }
 
-export function useInvoice(id: string | undefined) {
+export function useInvoice(id: string | undefined, opts?: { burstPoll?: boolean }) {
   const { request } = useApi();
   return useQuery({
     queryKey: id ? qk.invoices.detail(id) : ["disabled"],
@@ -52,10 +52,17 @@ export function useInvoice(id: string | undefined) {
     refetchInterval: (query) => {
       const data = query.state.data as Invoice | undefined;
       if (!data) return false;
-      // Keep polling while extraction or QBO posting is in flight.
-      // Stop once extraction_failed/ready_for_review/posted_to_qbo/rejected.
+      // Poll while extraction is in flight.
       if (data.status === "extracting" || data.status === "received") return 2000;
-      if (data.status === "approved" && !data.qbo_post_error) return 2000;
+      // Poll while a post-to-QBO is pending (approved, no bill id, no error yet).
+      if (
+        opts?.burstPoll &&
+        data.status === "approved" &&
+        !data.qbo_bill_id &&
+        !data.qbo_post_error
+      ) {
+        return 1500;
+      }
       return false;
     },
   });
@@ -117,6 +124,93 @@ export function useApproveInvoice(id: string) {
   return useMutation({
     mutationFn: () =>
       request<Invoice>(`/api/invoices/${id}/approve`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+export function useApproveAndPostInvoice(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      request<Invoice>(`/api/invoices/${id}/approve-and-post`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+export function usePostInvoice(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<Invoice>(`/api/invoices/${id}/post`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+export function useSendToPending(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (assignment: AssignPayload | null) =>
+      request<Invoice>(`/api/invoices/${id}/pending`, {
+        method: "POST",
+        body: (assignment ?? undefined) as unknown as BodyInit,
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+export function useUnapproveInvoice(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<Invoice>(`/api/invoices/${id}/unapprove`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+export interface AssignPayload {
+  user_id: string;
+  user_email?: string | null;
+  user_name?: string | null;
+}
+
+export function useAssignInvoice(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AssignPayload) =>
+      request<Invoice>(`/api/invoices/${id}/assign`, {
+        method: "POST",
+        body: payload as unknown as BodyInit,
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+export function useUnassignInvoice(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<Invoice>(`/api/invoices/${id}/unassign`, { method: "POST" }),
     onSuccess: (data) => {
       qc.setQueryData(qk.invoices.detail(id), data);
       void qc.invalidateQueries({ queryKey: qk.invoices.root() });

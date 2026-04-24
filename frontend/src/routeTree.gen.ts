@@ -13,6 +13,7 @@ import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthedVendorsRouteImport } from './routes/_authed.vendors'
+import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProjectsRouteImport } from './routes/_authed.projects'
 import { Route as AuthedInvoicesRouteImport } from './routes/_authed.invoices'
@@ -36,6 +37,11 @@ const IndexRoute = IndexRouteImport.update({
 const AuthedVendorsRoute = AuthedVendorsRouteImport.update({
   id: '/vendors',
   path: '/vendors',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedTeamRoute = AuthedTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
@@ -71,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/invoices': typeof AuthedInvoicesRoute
   '/projects': typeof AuthedProjectsRoute
   '/settings': typeof AuthedSettingsRoute
+  '/team': typeof AuthedTeamRoute
   '/vendors': typeof AuthedVendorsRoute
   '/invoices/$id': typeof AuthedInvoicesIdRoute
 }
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/invoices': typeof AuthedInvoicesRoute
   '/projects': typeof AuthedProjectsRoute
   '/settings': typeof AuthedSettingsRoute
+  '/team': typeof AuthedTeamRoute
   '/vendors': typeof AuthedVendorsRoute
   '/invoices/$id': typeof AuthedInvoicesIdRoute
 }
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/_authed/invoices': typeof AuthedInvoicesRoute
   '/_authed/projects': typeof AuthedProjectsRoute
   '/_authed/settings': typeof AuthedSettingsRoute
+  '/_authed/team': typeof AuthedTeamRoute
   '/_authed/vendors': typeof AuthedVendorsRoute
   '/_authed/invoices_/$id': typeof AuthedInvoicesIdRoute
 }
@@ -105,6 +114,7 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/projects'
     | '/settings'
+    | '/team'
     | '/vendors'
     | '/invoices/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -115,6 +125,7 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/projects'
     | '/settings'
+    | '/team'
     | '/vendors'
     | '/invoices/$id'
   id:
@@ -126,6 +137,7 @@ export interface FileRouteTypes {
     | '/_authed/invoices'
     | '/_authed/projects'
     | '/_authed/settings'
+    | '/_authed/team'
     | '/_authed/vendors'
     | '/_authed/invoices_/$id'
   fileRoutesById: FileRoutesById
@@ -164,6 +176,13 @@ declare module '@tanstack/react-router' {
       path: '/vendors'
       fullPath: '/vendors'
       preLoaderRoute: typeof AuthedVendorsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/team': {
+      id: '/_authed/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AuthedTeamRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/settings': {
@@ -209,6 +228,7 @@ interface AuthedRouteChildren {
   AuthedInvoicesRoute: typeof AuthedInvoicesRoute
   AuthedProjectsRoute: typeof AuthedProjectsRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
+  AuthedTeamRoute: typeof AuthedTeamRoute
   AuthedVendorsRoute: typeof AuthedVendorsRoute
   AuthedInvoicesIdRoute: typeof AuthedInvoicesIdRoute
 }
@@ -218,6 +238,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedInvoicesRoute: AuthedInvoicesRoute,
   AuthedProjectsRoute: AuthedProjectsRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
+  AuthedTeamRoute: AuthedTeamRoute,
   AuthedVendorsRoute: AuthedVendorsRoute,
   AuthedInvoicesIdRoute: AuthedInvoicesIdRoute,
 }

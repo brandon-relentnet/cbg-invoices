@@ -5,6 +5,7 @@ import {
   FolderIcon,
   ClockIcon,
   Cog6ToothIcon,
+  UsersIcon,
 } from "@heroicons/react/24/outline";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/cn";
@@ -19,6 +20,7 @@ const NAV: NavItem[] = [
   { to: "/invoices", label: "Invoices", Icon: DocumentTextIcon },
   { to: "/vendors", label: "Vendors", Icon: BuildingOffice2Icon },
   { to: "/projects", label: "Projects", Icon: FolderIcon },
+  { to: "/team", label: "Team", Icon: UsersIcon },
   { to: "/audit", label: "Audit log", Icon: ClockIcon },
   { to: "/settings", label: "Settings", Icon: Cog6ToothIcon },
 ];
