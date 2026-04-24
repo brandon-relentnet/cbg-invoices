@@ -269,7 +269,7 @@ async def invite_user(
         fallback_notice = f"We created the account but email failed to send: {exc}"
 
     return InviteUserResponse(
-        user=_serialize(user),
+        user=await _serialize(user),
         invite_link=invite_link,
         email_sent=email_sent,
         email_message_id=email_message_id,
