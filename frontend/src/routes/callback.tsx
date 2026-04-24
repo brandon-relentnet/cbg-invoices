@@ -18,7 +18,8 @@ function Callback() {
       if (!isLoading) void navigate({ to: "/invoices", replace: true });
     }, 3000);
     return () => clearTimeout(t);
-  }, [isLoading, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-stone">

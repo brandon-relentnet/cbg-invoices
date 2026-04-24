@@ -1,9 +1,12 @@
 /**
- * Thin wrapper over @logto/react — gets populated in phase 3.
- * Exported as a stable hook surface so components don't change later.
+ * Thin wrapper over @logto/react providing a stable hook surface.
+ *
+ * Important: only depend on PRIMITIVE fields from `useLogto()` (isAuthenticated,
+ * isLoading) — the `logto` object itself can change reference between renders,
+ * and depending on it in an effect triggers an infinite render loop.
  */
 import { useLogto } from "@logto/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CurrentUser } from "@/types";
 
 interface AuthAPI {
@@ -16,42 +19,73 @@ interface AuthAPI {
 }
 
 export function useAuth(): AuthAPI {
-  const logto = useLogto();
+  const {
+    isAuthenticated,
+    isLoading,
+    getIdTokenClaims,
+    getAccessToken,
+    signIn: logtoSignIn,
+    signOut: logtoSignOut,
+  } = useLogto();
   const [user, setUser] = useState<CurrentUser | null>(null);
   const resource = import.meta.env.VITE_LOGTO_RESOURCE as string;
 
+  // Load id-token claims into `user` only when auth state flips.
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      if (!logto.isAuthenticated) {
-        setUser(null);
-        return;
-      }
+    if (!isAuthenticated) {
+      setUser(null);
+      return;
+    }
+    (async () => {
       try {
-        const claims = await logto.getIdTokenClaims();
-        if (cancelled) return;
+        const claims = await getIdTokenClaims();
+        if (cancelled || !claims) return;
         setUser({
           id: claims.sub,
-          email: claims.email ?? null,
-          name: claims.name ?? claims.username ?? null,
+          email: (claims.email as string | undefined) ?? null,
+          name:
+            (claims.name as string | undefined) ??
+            (claims.username as string | undefined) ??
+            null,
         });
       } catch {
         if (!cancelled) setUser(null);
       }
-    }
-    void load();
+    })();
     return () => {
       cancelled = true;
     };
-  }, [logto.isAuthenticated, logto]);
+    // Intentionally only depend on isAuthenticated. getIdTokenClaims is a
+    // fresh function on every render but is effectively stable for our needs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
-  return {
-    isAuthenticated: logto.isAuthenticated,
-    isLoading: logto.isLoading,
-    user,
-    getAccessToken: () => logto.getAccessToken(resource),
-    signIn: () =>
-      logto.signIn(`${window.location.origin}/callback`),
-    signOut: () => logto.signOut(window.location.origin),
-  };
+  const signIn = useCallback(
+    () => logtoSignIn(`${window.location.origin}/callback`),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const signOut = useCallback(
+    () => logtoSignOut(window.location.origin),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const fetchToken = useCallback(
+    () => getAccessToken(resource),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resource],
+  );
+
+  return useMemo<AuthAPI>(
+    () => ({
+      isAuthenticated,
+      isLoading,
+      user,
+      getAccessToken: fetchToken,
+      signIn,
+      signOut,
+    }),
+    [isAuthenticated, isLoading, user, fetchToken, signIn, signOut],
+  );
 }

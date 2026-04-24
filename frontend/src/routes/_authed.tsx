@@ -1,7 +1,7 @@
 import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useAuth } from "@/lib/auth";
-import { useEffect } from "react";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -9,12 +9,17 @@ export const Route = createFileRoute("/_authed")({
 
 function AuthedLayout() {
   const { isAuthenticated, isLoading, signIn } = useAuth();
+  const redirecting = useRef(false);
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      void signIn();
-    }
-  }, [isAuthenticated, isLoading, signIn]);
+    if (isLoading || isAuthenticated) return;
+    if (redirecting.current) return;
+    redirecting.current = true;
+    void signIn();
+    // Only depend on the primitive flags — `signIn` is a fresh closure every
+    // render and would retrigger the effect (infinite redirect).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, isLoading]);
 
   if (isLoading || !isAuthenticated) {
     return (
