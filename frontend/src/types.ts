@@ -1,0 +1,99 @@
+export type InvoiceStatus =
+  | "received"
+  | "extracting"
+  | "extraction_failed"
+  | "ready_for_review"
+  | "approved"
+  | "posted_to_qbo"
+  | "rejected";
+
+export interface LineItem {
+  description: string;
+  quantity: number | null;
+  unit_price_cents: number | null;
+  amount_cents: number | null;
+}
+
+export interface Invoice {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  source: "email" | "upload";
+  sender_email: string | null;
+  email_subject: string | null;
+  received_at: string;
+  pdf_filename: string;
+  pdf_size_bytes: number;
+  pdf_page_count: number | null;
+  status: InvoiceStatus;
+  extraction_error: string | null;
+  vendor_name: string | null;
+  vendor_id: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  due_date: string | null;
+  subtotal_cents: number | null;
+  tax_cents: number | null;
+  total_cents: number | null;
+  currency: string;
+  po_number: string | null;
+  notes: string | null;
+  line_items: LineItem[];
+  project_id: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  qbo_bill_id: string | null;
+  qbo_posted_at: string | null;
+}
+
+export interface InvoiceListResponse {
+  invoices: Invoice[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface Vendor {
+  id: string;
+  qbo_id: string | null;
+  display_name: string;
+  email: string | null;
+  active: boolean;
+  last_synced_at: string | null;
+}
+
+export interface Project {
+  id: string;
+  qbo_id: string;
+  qbo_type: "Customer" | "Class";
+  display_name: string;
+  parent_qbo_id: string | null;
+  active: boolean;
+  last_synced_at: string | null;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  created_at: string;
+  actor_id: string;
+  actor_email: string | null;
+  invoice_id: string | null;
+  action: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  message: string | null;
+}
+
+export interface QboStatus {
+  connected: boolean;
+  realm_id: string | null;
+  expires_at: string | null;
+  last_vendor_sync: string | null;
+  last_project_sync: string | null;
+}
+
+export interface CurrentUser {
+  id: string;
+  email: string | null;
+  name: string | null;
+}
