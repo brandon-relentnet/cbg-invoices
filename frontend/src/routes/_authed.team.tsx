@@ -1,16 +1,19 @@
 /**
- * Team management page — list members, invite, remove.
+ * Team management page — list members, invite, remove, resend invite.
  *
  * Flat auth model: any signed-in user can manage the team. The backend uses
- * the Logto Management API (via the configured M2M app) to add/remove users.
+ * the Logto Management API (via the configured M2M app) to add/remove users,
+ * and sends invite emails via Resend.
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
+  CheckCircleIcon,
   ClipboardDocumentIcon,
+  ExclamationTriangleIcon,
+  PaperAirplaneIcon,
   PlusIcon,
-  ShieldCheckIcon,
   TrashIcon,
   UserPlusIcon,
   XMarkIcon,
@@ -32,6 +35,15 @@ export const Route = createFileRoute("/_authed/team")({
   component: TeamPage,
 });
 
+interface InviteResult {
+  email: string;
+  name: string | null;
+  invite_link: string;
+  email_sent: boolean;
+  fallback_notice: string | null;
+  was_resend: boolean;
+}
+
 function TeamPage() {
   const currentUser = useUser();
   const { data, isLoading, error } = useUsers();
@@ -40,10 +52,8 @@ function TeamPage() {
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<TeamMember | null>(null);
-  const [lastInvite, setLastInvite] = useState<
-    | { email: string; name: string | null; password: string }
-    | null
-  >(null);
+  const [lastInvite, setLastInvite] = useState<InviteResult | null>(null);
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   async function handleInvite(payload: { email: string; name: string }) {
     const res = await invite.mutateAsync({
@@ -54,8 +64,32 @@ function TeamPage() {
     setLastInvite({
       email: res.user.email ?? payload.email,
       name: res.user.name ?? payload.name ?? null,
-      password: res.temporary_password,
+      invite_link: res.invite_link,
+      email_sent: res.email_sent,
+      fallback_notice: res.fallback_notice,
+      was_resend: false,
     });
+  }
+
+  async function handleResend(member: TeamMember) {
+    if (!member.email) return;
+    setResendingId(member.id);
+    try {
+      const res = await invite.mutateAsync({
+        email: member.email,
+        name: member.name ?? undefined,
+      });
+      setLastInvite({
+        email: member.email,
+        name: member.name,
+        invite_link: res.invite_link,
+        email_sent: res.email_sent,
+        fallback_notice: res.fallback_notice,
+        was_resend: true,
+      });
+    } finally {
+      setResendingId(null);
+    }
   }
 
   async function handleRemove() {
@@ -78,9 +112,9 @@ function TeamPage() {
         }
       />
 
-      {/* Fresh-invite credentials banner */}
+      {/* Invite-result banner (shown after invite or resend) */}
       {lastInvite && (
-        <InviteCredentialsBanner
+        <InviteResultBanner
           invite={lastInvite}
           onDismiss={() => setLastInvite(null)}
         />
@@ -129,6 +163,8 @@ function TeamPage() {
                   member={m}
                   isYou={m.id === currentUser?.id}
                   onRemove={() => setMemberToRemove(m)}
+                  onResend={() => handleResend(m)}
+                  resending={resendingId === m.id}
                 />
               ))}
             </tbody>
@@ -163,11 +199,16 @@ function MemberRow({
   member,
   isYou,
   onRemove,
+  onResend,
+  resending,
 }: {
   member: TeamMember;
   isYou: boolean;
   onRemove: () => void;
+  onResend: () => void;
+  resending: boolean;
 }) {
+  const canResend = Boolean(member.email) && !isYou;
   return (
     <tr className="border-b border-stone/60 hover:bg-amber/5 transition-colors">
       <td className="px-4 py-3">
@@ -202,19 +243,42 @@ function MemberRow({
         {formatEpochMs(member.created_at)}
       </td>
       <td className="px-4 py-3 text-sm text-slate-500">
-        {formatEpochMs(member.last_sign_in_at)}
+        {member.last_sign_in_at
+          ? formatEpochMs(member.last_sign_in_at)
+          : <span className="text-slate-400 italic">Never signed in</span>}
       </td>
-      <td className="px-4 py-3 text-right">
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={isYou}
-          title={isYou ? "You can't remove yourself" : "Remove from team"}
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-700 disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          <TrashIcon className="h-3.5 w-3.5" />
-          Remove
-        </button>
+      <td className="px-4 py-3 text-right whitespace-nowrap">
+        <div className="flex items-center gap-3 justify-end">
+          {canResend && (
+            <button
+              type="button"
+              onClick={onResend}
+              disabled={resending}
+              className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-navy disabled:opacity-50"
+              title="Send a fresh invite email with a new magic link"
+            >
+              {resending ? (
+                <span
+                  aria-hidden
+                  className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent"
+                />
+              ) : (
+                <PaperAirplaneIcon className="h-3.5 w-3.5" />
+              )}
+              {resending ? "Sending…" : "Resend invite"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={isYou}
+            title={isYou ? "You can't remove yourself" : "Remove from team"}
+            className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-700 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <TrashIcon className="h-3.5 w-3.5" />
+            Remove
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -259,7 +323,6 @@ function InviteModal({
     onSubmit({ email: email.trim(), name: name.trim() });
   }
 
-  // Reset fields when closed
   function handleClose() {
     setEmail("");
     setName("");
@@ -288,7 +351,7 @@ function InviteModal({
               <div>
                 <h2 className="font-display text-xl text-navy">Invite member</h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  We'll generate a one-time password you can share with them.
+                  We'll email them a one-click sign-in link valid for 7 days.
                 </p>
               </div>
               <button
@@ -339,53 +402,74 @@ function InviteModal({
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Credentials banner (shown after successful invite)
+// Invite result banner — replaces the old one-time-password banner
 // ──────────────────────────────────────────────────────────────────────────
 
-function InviteCredentialsBanner({
+function InviteResultBanner({
   invite,
   onDismiss,
 }: {
-  invite: { email: string; name: string | null; password: string };
+  invite: InviteResult;
   onDismiss: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const snippet = [
-    `Email: ${invite.email}`,
-    `Temporary password: ${invite.password}`,
-    "Sign in at the portal and change your password on first login.",
-  ].join("\n");
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(snippet);
+      await navigator.clipboard.writeText(invite.invite_link);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // no-op
+      // clipboard unavailable — no-op
     }
   }
 
+  const success = invite.email_sent;
+  const verb = invite.was_resend ? "Fresh link sent" : "Invite sent";
+
   return (
-    <div className="mb-4 bg-green-50 border-l-2 border-green-700 p-4">
-      <div className="flex items-start gap-3">
-        <ShieldCheckIcon className="h-5 w-5 text-green-700 flex-shrink-0 mt-0.5" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-green-900">
-            Invited {invite.name || invite.email}. Share these credentials securely:
+    <div
+      className={`mb-4 p-4 border-l-2 flex items-start gap-3 ${
+        success
+          ? "bg-green-50 border-green-700"
+          : "bg-amber/10 border-amber"
+      }`}
+    >
+      {success ? (
+        <CheckCircleIcon className="h-5 w-5 text-green-700 flex-shrink-0 mt-0.5" />
+      ) : (
+        <ExclamationTriangleIcon className="h-5 w-5 text-amber flex-shrink-0 mt-0.5" />
+      )}
+      <div className="flex-1 min-w-0">
+        <p
+          className={`text-sm font-semibold ${
+            success ? "text-green-900" : "text-navy"
+          }`}
+        >
+          {success
+            ? `${verb} to ${invite.name || invite.email}`
+            : "Couldn't send the email automatically"}
+        </p>
+        {invite.fallback_notice && (
+          <p className="text-xs text-graphite mt-1">{invite.fallback_notice}</p>
+        )}
+        {!success && (
+          <p className="text-xs text-graphite mt-1">
+            Share the link below with {invite.name || invite.email} via any
+            channel — they'll land on the portal already signed in.
           </p>
-          <div className="mt-2 bg-white border border-green-700/30 p-3 font-mono text-xs whitespace-pre-wrap break-all">
-            {snippet}
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={handleCopy}>
-              <ClipboardDocumentIcon className="h-4 w-4" />
-              {copied ? "Copied" : "Copy"}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onDismiss}>
-              Dismiss
-            </Button>
-          </div>
+        )}
+        <div className="mt-2 bg-white border border-slate-300 p-2 font-mono text-xs break-all">
+          {invite.invite_link}
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={handleCopy}>
+            <ClipboardDocumentIcon className="h-4 w-4" />
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onDismiss}>
+            Dismiss
+          </Button>
         </div>
       </div>
     </div>

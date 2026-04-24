@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { UserCircleIcon } from "@heroicons/react/24/outline";
 import { useUser } from "@/lib/auth";
 import { useInvoices } from "@/lib/invoices";
 import type { InvoiceStatus } from "@/types";
@@ -6,34 +7,34 @@ import { InvoiceRow } from "./InvoiceRow";
 import { UploadDropzone } from "./UploadDropzone";
 import { cn } from "@/lib/cn";
 
-// Filter definitions. `mineOnly` adds client-side filtering by assigned_to_id.
+// Simplified filter model: 5 primary tabs + a cross-cutting "Mine only" toggle.
+//
+// "Needs Review" absorbs the short-lived in-flight states (received,
+// extracting, extraction_failed) so those invoices are always visible where
+// the user looks, rather than hiding them in a separate tab.
 interface FilterDef {
   key: string;
   label: string;
-  status: InvoiceStatus[] | undefined;
-  mineOnly?: boolean;
-  countsAs?: (inv: { status: InvoiceStatus }) => boolean;
+  status: InvoiceStatus[];
 }
 
 const FILTERS: FilterDef[] = [
   {
     key: "needs_review",
     label: "Needs Review",
-    status: ["ready_for_review", "extraction_failed"],
+    status: ["ready_for_review", "extraction_failed", "received", "extracting"],
   },
   { key: "pending", label: "Pending", status: ["pending"] },
   { key: "approved", label: "Approved", status: ["approved"] },
   { key: "posted", label: "Posted", status: ["posted_to_qbo"] },
-  { key: "mine", label: "Assigned to me", status: undefined, mineOnly: true },
-  { key: "rejected", label: "Rejected", status: ["rejected"] },
-  { key: "in_progress", label: "In progress", status: ["received", "extracting"] },
-  { key: "all", label: "All", status: undefined },
+  { key: "archive", label: "Archive", status: ["rejected"] },
 ];
 
 export function InvoiceQueue() {
   const user = useUser();
   const [filterKey, setFilterKey] = useState<string>("needs_review");
   const [q, setQ] = useState("");
+  const [mineOnly, setMineOnly] = useState(false);
   const mySub = user?.id ?? null;
 
   const filter = FILTERS.find((f) => f.key === filterKey) ?? FILTERS[0];
@@ -46,11 +47,11 @@ export function InvoiceQueue() {
 
   const invoices = useMemo(() => {
     const list = data?.invoices ?? [];
-    if (filter.mineOnly && mySub) {
+    if (mineOnly && mySub) {
       return list.filter((inv) => inv.assigned_to_id === mySub);
     }
     return list;
-  }, [data, filter.mineOnly, mySub]);
+  }, [data, mineOnly, mySub]);
 
   const empty = !isLoading && invoices.length === 0;
 
@@ -59,7 +60,7 @@ export function InvoiceQueue() {
       {/* Upload dropzone FIRST — primary action on this page */}
       <UploadDropzone />
 
-      {/* Filter chips + search */}
+      {/* Filter chips row with Mine toggle on the right */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-1 flex-wrap">
           {FILTERS.map((f) => (
@@ -78,18 +79,38 @@ export function InvoiceQueue() {
             </button>
           ))}
         </div>
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search vendor, invoice #, PO…"
-          className={cn(
-            "px-3 py-1.5 text-sm bg-white border border-slate-300",
-            "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
-            "w-full sm:w-64",
-          )}
-          aria-label="Search invoices"
-        />
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Mine-only toggle pill */}
+          <button
+            type="button"
+            onClick={() => setMineOnly((v) => !v)}
+            disabled={!mySub}
+            title={mySub ? "Only show invoices assigned to you" : "Sign in to enable"}
+            aria-pressed={mineOnly}
+            className={cn(
+              "inline-flex items-center gap-2 px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors border",
+              mineOnly
+                ? "bg-amber text-navy border-amber"
+                : "bg-white text-slate-600 border-slate-300 hover:border-amber",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+          >
+            <UserCircleIcon className="h-4 w-4" />
+            Mine only
+          </button>
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search vendor, invoice #, PO…"
+            className={cn(
+              "px-3 py-1.5 text-sm bg-white border border-slate-300",
+              "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
+              "w-full sm:w-56",
+            )}
+            aria-label="Search invoices"
+          />
+        </div>
       </div>
 
       {/* Table */}
@@ -101,7 +122,7 @@ export function InvoiceQueue() {
           </div>
         )}
         {!isLoading && !error && empty && (
-          <EmptyState filterKey={filterKey} />
+          <EmptyState filterKey={filterKey} mineOnly={mineOnly} />
         )}
         {!isLoading && !error && !empty && (
           <table className="w-full">
@@ -123,7 +144,7 @@ export function InvoiceQueue() {
             </tbody>
           </table>
         )}
-        {data && data.total > invoices.length && !filter.mineOnly && (
+        {data && data.total > invoices.length && !mineOnly && (
           <div className="px-4 py-3 text-xs text-slate-500 border-t border-stone/60">
             Showing {invoices.length} of {data.total}
           </div>
@@ -153,7 +174,13 @@ function QueueSkeleton() {
   );
 }
 
-function EmptyState({ filterKey }: { filterKey: string }) {
+function EmptyState({
+  filterKey,
+  mineOnly,
+}: {
+  filterKey: string;
+  mineOnly: boolean;
+}) {
   const copy: Record<string, { title: string; body: string }> = {
     needs_review: {
       title: "Inbox is clear",
@@ -165,30 +192,25 @@ function EmptyState({ filterKey }: { filterKey: string }) {
     },
     approved: {
       title: "No approved invoices awaiting post",
-      body: "Approve an invoice without posting and it'll sit here until you're ready.",
+      body: "Approve without posting to sit them here until you're ready.",
     },
     posted: {
       title: "Nothing posted yet",
       body: "Once you post invoices to QuickBooks they'll show up here.",
     },
-    mine: {
-      title: "Nothing assigned to you",
-      body: "Invoices assigned to your account will show up here.",
-    },
-    rejected: {
-      title: "No rejected invoices",
-      body: "Rejected invoices are kept for the audit trail.",
-    },
-    in_progress: {
-      title: "No invoices in flight",
-      body: "Invoices being uploaded or extracted will appear here briefly.",
-    },
-    all: {
-      title: "No invoices yet",
-      body: "Upload a PDF above to get started.",
+    archive: {
+      title: "Archive is empty",
+      body: "Rejected invoices are kept here for the audit trail.",
     },
   };
-  const { title, body } = copy[filterKey] ?? copy.all;
+  const base = copy[filterKey] ?? {
+    title: "Nothing here",
+    body: "Try a different filter.",
+  };
+  const title = mineOnly ? "Nothing assigned to you" : base.title;
+  const body = mineOnly
+    ? "Turn off Mine only to see the full team's work."
+    : base.body;
   return (
     <div className="px-6 py-14 text-center">
       <p className="font-display text-lg text-navy">{title}</p>

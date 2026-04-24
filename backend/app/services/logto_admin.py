@@ -140,8 +140,14 @@ class LogtoUser:
 
 
 async def list_users(*, limit: int = 100) -> list[LogtoUser]:
-    """Return up to `limit` users, newest first. No pagination cursor yet."""
-    data = await _request("GET", f"/api/users?page=1&page_size={limit}")
+    """Return up to `limit` users, newest first.
+
+    Logto caps `page_size` — values over 100 return a 400
+    `guard.invalid_pagination`. We clamp to 100 for safety. Cambridge's team
+    will never have more than that; if it does, we'll add a pagination cursor.
+    """
+    capped = max(1, min(100, limit))
+    data = await _request("GET", f"/api/users?page=1&page_size={capped}")
     if not isinstance(data, list):
         return []
     # Logto returns newest first by default
@@ -199,3 +205,43 @@ async def create_user(
 
 async def delete_user(user_id: str) -> None:
     await _request("DELETE", f"/api/users/{user_id}")
+
+
+async def find_user_by_email(email: str) -> LogtoUser | None:
+    """Look up an existing user by primary email. Case-insensitive."""
+    # Logto's list endpoint supports a `search` query that matches across
+    # several fields. Use it to find a candidate, then filter locally.
+    from urllib.parse import quote
+
+    data = await _request(
+        "GET",
+        f"/api/users?page=1&page_size=20&search={quote(email)}",
+    )
+    if not isinstance(data, list):
+        return None
+    email_lower = email.lower()
+    for raw in data:
+        if (raw.get("primaryEmail") or "").lower() == email_lower:
+            return LogtoUser.from_api(raw)
+    return None
+
+
+async def create_one_time_token(
+    *, email: str, expires_in_seconds: int = 7 * 24 * 3600
+) -> str:
+    """Create a one-time token tied to an email.
+
+    Used for magic-link sign-in during invites. Returns the raw token string;
+    store it briefly in the invite URL and let Logto's Experience API consume
+    it when the user follows the link.
+    """
+    body = {
+        "email": email,
+        "expiresIn": expires_in_seconds,
+        # Required by Logto's schema even when empty
+        "context": {"jitOrganizationIds": []},
+    }
+    data = await _request("POST", "/api/one-time-tokens", json=body)
+    if not isinstance(data, dict) or "token" not in data:
+        raise LogtoAdminError(f"Unexpected one-time-token response: {data!r}")
+    return data["token"]

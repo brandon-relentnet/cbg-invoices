@@ -1,15 +1,17 @@
 import { Link } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpTrayIcon,
   EnvelopeIcon,
   PaperAirplaneIcon,
 } from "@heroicons/react/24/outline";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Invoice } from "@/types";
 import { StatusBadge } from "@/components/invoices/StatusBadge";
 import { formatCents, formatRelative } from "@/lib/format";
 import { usePostInvoice } from "@/lib/invoices";
 import { useQboStatus } from "@/lib/qbo";
+import { qk } from "@/lib/queryKeys";
 
 export function InvoiceRow({ invoice }: { invoice: Invoice }) {
   return (
@@ -88,24 +90,53 @@ function makeInitials(source: string): string {
 function QuickAction({ invoice }: { invoice: Invoice }) {
   const qbo = useQboStatus();
   const post = usePostInvoice(invoice.id);
+  const qc = useQueryClient();
+  // Local "posting" flag — sticks from click until invoice exits the approved
+  // state (either posted_to_qbo = row disappears; or qbo_post_error appears).
   const [didPost, setDidPost] = useState(false);
 
+  // Reset if the invoice shows an error — so the user can click again and see
+  // the real retry state from a clean slate.
+  useEffect(() => {
+    if (didPost && invoice.qbo_post_error) setDidPost(false);
+  }, [invoice.qbo_post_error, didPost]);
+
+  function triggerPost() {
+    post.mutate(undefined, {
+      onSuccess: () => {
+        setDidPost(true);
+        // Burst-refetch the queue so the row updates faster than the 10s poll.
+        const bump = () =>
+          qc.invalidateQueries({ queryKey: qk.invoices.root() });
+        setTimeout(bump, 1500);
+        setTimeout(bump, 4000);
+        setTimeout(bump, 8000);
+      },
+    });
+  }
+
   if (invoice.status === "approved" && qbo.data?.connected) {
+    const posting = post.isPending || didPost;
     return (
       <div className="flex items-center gap-2 justify-end">
         <button
           type="button"
           onClick={(e) => {
             e.preventDefault();
-            post.mutate(undefined, {
-              onSuccess: () => setDidPost(true),
-            });
+            triggerPost();
           }}
-          disabled={post.isPending || didPost}
+          disabled={posting}
           className="text-xs font-semibold text-navy hover:text-amber disabled:opacity-50 inline-flex items-center gap-1"
         >
-          <PaperAirplaneIcon className="h-3.5 w-3.5" />
-          {didPost ? "Posting…" : post.isPending ? "Posting…" : "Post"}
+          {posting ? (
+            <span
+              aria-hidden
+              className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent"
+            />
+          ) : (
+            <PaperAirplaneIcon className="h-3.5 w-3.5" />
+          )}
+          {posting ? "Posting…" : "Post"}
         </button>
         <Link
           to="/invoices/$id"

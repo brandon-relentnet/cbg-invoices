@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
   ArrowUturnLeftIcon,
   CheckCircleIcon,
   ClockIcon,
@@ -38,8 +39,9 @@ import {
   type InvoicePatchPayload,
 } from "@/lib/invoices";
 import type { TeamMember } from "@/lib/users";
-import type { Invoice, Project, Vendor } from "@/types";
+import type { Invoice, Project, QboStatus, Vendor } from "@/types";
 import { useQboStatus } from "@/lib/qbo";
+import { qboBillUrl } from "@/lib/qboUrls";
 import { formatDate } from "@/lib/format";
 
 export const Route = createFileRoute("/_authed/invoices_/$id")({
@@ -109,13 +111,27 @@ function InvoiceDetailPage() {
 
   const showEditor = mode === "review" || forceEdit;
 
-  // Stop the burst poll once status leaves APPROVED (success or error settled)
+  // Stop the burst poll once the post resolves: either status flipped to
+  // posted_to_qbo / pending / rejected / etc, OR qbo_post_error appeared.
   useEffect(() => {
     if (!invoice) return;
-    if (burstPoll && invoice.status !== "approved") {
+    if (
+      burstPoll &&
+      (invoice.status !== "approved" || invoice.qbo_post_error)
+    ) {
       setBurstPoll(false);
     }
-  }, [invoice?.status, burstPoll]);
+  }, [invoice?.status, invoice?.qbo_post_error, burstPoll]);
+
+  // True while a QBO post is in flight — the POST returned quickly but the
+  // backend task is still running. Drives the perpetual loading indicator.
+  const postingInFlight =
+    postOnly.isPending ||
+    approveAndPost.isPending ||
+    (burstPoll &&
+      invoice?.status === "approved" &&
+      !invoice?.qbo_bill_id &&
+      !invoice?.qbo_post_error);
 
   // Keyboard shortcuts — context-aware
   useEffect(() => {
@@ -308,7 +324,7 @@ function InvoiceDetailPage() {
       />
 
       {/* Context banners */}
-      <StatusBanner invoice={invoice} qboConnected={qboConnected}>
+      <StatusBanner invoice={invoice} qbo={qboQuery.data} qboConnected={qboConnected}>
         {invoice.status === "extraction_failed" && (
           <Button
             variant="secondary"
@@ -412,6 +428,7 @@ function InvoiceDetailPage() {
           qboConnected={qboConnected}
           forceEdit={forceEdit}
           showEditor={showEditor}
+          postingInFlight={!!postingInFlight}
           onSave={async () => {
             await flushDirty();
           }}
@@ -502,10 +519,12 @@ function InvoiceDetailPage() {
 
 function StatusBanner({
   invoice,
+  qbo,
   qboConnected,
   children,
 }: {
   invoice: Invoice;
+  qbo: QboStatus | undefined;
   qboConnected: boolean;
   children?: React.ReactNode;
 }) {
@@ -553,16 +572,29 @@ function StatusBanner({
     );
   }
   if (invoice.status === "posted_to_qbo") {
+    const billUrl = qboBillUrl(qbo, invoice.qbo_bill_id);
     return (
       <div className={`${base} bg-green-50 border-green-700`}>
         <CheckCircleIcon className="h-5 w-5 text-green-700 flex-shrink-0 mt-0.5" />
         <div className="flex-1 text-sm text-green-900">
           <strong>Posted to QBO</strong>
-          {invoice.qbo_bill_id && (
-            <> as bill #{invoice.qbo_bill_id}</>
-          )}
+          {invoice.qbo_bill_id && <> as bill #{invoice.qbo_bill_id}</>}
           {invoice.qbo_posted_at && <> on {formatDate(invoice.qbo_posted_at)}</>}
           {invoice.reviewed_by_email && <> · reviewed by {invoice.reviewed_by_email}</>}.
+          {billUrl && (
+            <>
+              {" "}
+              <a
+                href={billUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="inline-flex items-center gap-1 font-semibold text-green-900 underline underline-offset-2 hover:text-green-700"
+              >
+                <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                View in QuickBooks
+              </a>
+            </>
+          )}
         </div>
       </div>
     );
@@ -647,6 +679,8 @@ interface FooterProps {
   qboConnected: boolean;
   forceEdit: boolean;
   showEditor: boolean;
+  /** Tracks the full QBO post roundtrip, not just the HTTP request. */
+  postingInFlight: boolean;
   onSave: () => void;
   onCancelEdit: () => void;
   onReject: () => void;
@@ -668,6 +702,7 @@ function ActionFooter(props: FooterProps) {
     qboConnected,
     forceEdit,
     showEditor,
+    postingInFlight,
     onSave,
     onCancelEdit,
     onReject,
@@ -814,13 +849,17 @@ function ActionFooter(props: FooterProps) {
           </Button>
         )}
         <SplitButton
-          primaryLabel={primary.label}
+          primaryLabel={
+            postingInFlight && primary.label === "Post to QBO"
+              ? "Posting to QBO…"
+              : primary.label
+          }
           onPrimary={primary.onClick}
           options={options}
           variant="primary"
-          disabled={primary.disabled || busy}
+          disabled={primary.disabled || busy || postingInFlight}
           title={primary.disabled ? primary.disabledReason : undefined}
-          loading={busy && !patchPending}
+          loading={(busy && !patchPending) || postingInFlight}
         />
       </div>
     </div>

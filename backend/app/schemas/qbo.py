@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict
 class QboStatus(BaseModel):
     connected: bool
     realm_id: str | None = None
+    # Environment is always surfaced so the UI can construct correct deep-links
+    # (sandbox vs production QBO have different hostnames)
+    environment: str = "sandbox"
     expires_at: datetime | None = None
     refresh_expires_at: datetime | None = None
     last_vendor_sync_at: datetime | None = None

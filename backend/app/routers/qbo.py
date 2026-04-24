@@ -23,11 +23,13 @@ async def qbo_status(
     _user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    settings = get_settings()
     token = await qbo_client.get_stored_token(session)
     if token is None:
-        return QboStatus(connected=False)
+        return QboStatus(connected=False, environment=settings.qbo_environment)
     return QboStatus(
         connected=True,
+        environment=settings.qbo_environment,
         realm_id=token.realm_id,
         expires_at=token.expires_at,
         refresh_expires_at=token.refresh_expires_at,

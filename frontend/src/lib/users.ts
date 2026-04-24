@@ -20,7 +20,13 @@ interface UsersResponse {
 
 interface InviteResponse {
   user: TeamMember;
-  temporary_password: string;
+  /** Magic-link URL. Always returned. */
+  invite_link: string;
+  /** True when Resend accepted the email. */
+  email_sent: boolean;
+  email_message_id: string | null;
+  /** Populated when email couldn't send and admin needs to share the link manually. */
+  fallback_notice: string | null;
 }
 
 const USERS_KEY = ["users"] as const;

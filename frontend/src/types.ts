@@ -95,6 +95,7 @@ export interface AuditLogEntry {
 
 export interface QboStatus {
   connected: boolean;
+  environment: "sandbox" | "production";
   realm_id: string | null;
   expires_at: string | null;
   refresh_expires_at: string | null;

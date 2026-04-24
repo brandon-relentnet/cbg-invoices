@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as InviteRouteImport } from './routes/invite'
 import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
@@ -20,6 +21,11 @@ import { Route as AuthedInvoicesRouteImport } from './routes/_authed.invoices'
 import { Route as AuthedAuditRouteImport } from './routes/_authed.audit'
 import { Route as AuthedInvoicesIdRouteImport } from './routes/_authed.invoices_.$id'
 
+const InviteRoute = InviteRouteImport.update({
+  id: '/invite',
+  path: '/invite',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CallbackRoute = CallbackRouteImport.update({
   id: '/callback',
   path: '/callback',
@@ -73,6 +79,7 @@ const AuthedInvoicesIdRoute = AuthedInvoicesIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/callback': typeof CallbackRoute
+  '/invite': typeof InviteRoute
   '/audit': typeof AuthedAuditRoute
   '/invoices': typeof AuthedInvoicesRoute
   '/projects': typeof AuthedProjectsRoute
@@ -84,6 +91,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/callback': typeof CallbackRoute
+  '/invite': typeof InviteRoute
   '/audit': typeof AuthedAuditRoute
   '/invoices': typeof AuthedInvoicesRoute
   '/projects': typeof AuthedProjectsRoute
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authed': typeof AuthedRouteWithChildren
   '/callback': typeof CallbackRoute
+  '/invite': typeof InviteRoute
   '/_authed/audit': typeof AuthedAuditRoute
   '/_authed/invoices': typeof AuthedInvoicesRoute
   '/_authed/projects': typeof AuthedProjectsRoute
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/callback'
+    | '/invite'
     | '/audit'
     | '/invoices'
     | '/projects'
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/callback'
+    | '/invite'
     | '/audit'
     | '/invoices'
     | '/projects'
@@ -133,6 +144,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_authed'
     | '/callback'
+    | '/invite'
     | '/_authed/audit'
     | '/_authed/invoices'
     | '/_authed/projects'
@@ -146,10 +158,18 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthedRoute: typeof AuthedRouteWithChildren
   CallbackRoute: typeof CallbackRoute
+  InviteRoute: typeof InviteRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/invite': {
+      id: '/invite'
+      path: '/invite'
+      fullPath: '/invite'
+      preLoaderRoute: typeof InviteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/callback': {
       id: '/callback'
       path: '/callback'
@@ -250,6 +270,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthedRoute: AuthedRouteWithChildren,
   CallbackRoute: CallbackRoute,
+  InviteRoute: InviteRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
