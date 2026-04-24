@@ -1,4 +1,4 @@
-.PHONY: up down restart logs migrate logto-setup shell test build fe-shell
+.PHONY: up down restart logs migrate logto-setup logto-css shell test build fe-shell
 
 up:
 	docker compose up -d
@@ -34,6 +34,11 @@ logto-setup:
 	docker compose up -d --force-recreate --no-deps backend
 	@sleep 2
 	docker compose exec backend python scripts/logto_setup.py
+
+logto-css:
+	# Apply Cambridge branding to Logto's hosted sign-in UI via the
+	# Management API's Custom CSS feature.
+	docker compose exec backend python scripts/apply_logto_css.py
 
 shell:
 	docker compose exec backend /bin/bash

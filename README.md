@@ -67,7 +67,12 @@ will run migrations automatically.
    ```bash
    make restart
    ```
-5. In Logto admin, **create at least one user** (Users → Add user) so you can
+5. Apply the Cambridge brand to Logto's hosted sign-in screen:
+   ```bash
+   make logto-css
+   ```
+   Re-run any time you tweak `backend/scripts/logto-theme/cambridge.css`.
+6. In Logto admin, **create at least one user** (Users → Add user) so you can
    log in. Alternatively enable a social connector.
 
 ### 4. Log in
@@ -116,6 +121,7 @@ make logs            # Tail all logs
 make logs-backend    # Tail only backend
 make migrate         # Run alembic upgrade head
 make logto-setup     # Bootstrap Logto app registration
+make logto-css       # Apply Cambridge brand CSS to Logto sign-in screen
 make shell           # Open shell in backend container
 make test            # Run backend pytest
 make migration msg="add foo"  # Create a new alembic revision

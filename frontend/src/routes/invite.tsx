@@ -4,24 +4,28 @@
  * Backend mints a one-time token via Logto's Management API and emails the
  * user a link to /invite?token=…&email=…
  *
- * When the user lands here we call the Logto SDK's signIn() with the
- * documented `one_time_token` + `login_hint` extraParams. Logto's hosted
- * sign-in page auto-consumes the token and redirects back to /callback to
- * finish the session — no password, no passcode prompt.
+ * Flow:
+ *   1. If the recipient is already signed in (typically the inviter testing
+ *      their own invite link), force-sign them out first — otherwise Logto
+ *      sees an existing session and skips the OTT flow.
+ *   2. Otherwise, call signIn() with the documented one-time-token params.
+ *      Logto's experience UI auto-detects the params and consumes the token,
+ *      then redirects back to /callback.
+ *   3. After /callback finishes, the main app's PasswordSetupModal kicks in
+ *      (because the new user has needs_password=true in their custom data).
  *
- * Prerequisite (configured in the Logto admin console):
+ * Prerequisite — Logto admin console:
  *   Console → Sign-in experience → Sign-up and sign-in
- *     - Under "Sign-in", enable the "Email" identifier.
- *     - Under "Sign-in methods", include "Email" with the "Verification code"
- *       method enabled.
- *   Without these, Logto won't recognize the one-time-token hint and will
- *   fall back to the normal sign-in screen.
+ *     - Sign-up identifier: Email
+ *     - Sign-up password: NOT required
+ *     - Sign-in: Email + Verification code enabled
  *
  * Docs: https://docs.logto.io/end-user-flows/one-time-token
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useLogto } from "@logto/react";
+import { callbackUri } from "@/lib/auth";
 
 export const Route = createFileRoute("/invite")({
   component: InvitePage,
@@ -31,17 +35,19 @@ export const Route = createFileRoute("/invite")({
   }),
 });
 
-// Module-level flag so React StrictMode's double mount doesn't kick off two
-// parallel sign-in redirects (the second one wins, overwriting PKCE state).
+// Module-level guards — survive React StrictMode's double-effect invocation.
+// Cleared on full-page navigation (which signIn/signOut both perform).
 let signInTriggered = false;
+let signOutTriggered = false;
 
 function InvitePage() {
   const { token, email } = Route.useSearch();
-  const { signIn, isAuthenticated } = useLogto();
+  const { signIn, signOut, isAuthenticated, isLoading } = useLogto();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (signInTriggered) return;
+    // Wait for Logto to resolve the session
+    if (isLoading) return;
 
     if (!token || !email) {
       setError(
@@ -50,17 +56,29 @@ function InvitePage() {
       return;
     }
 
-    // If the recipient is already signed in as someone else, we want Logto to
-    // swap sessions — pass clearTokens: false per the docs so PKCE state
-    // flows through correctly and the one-time token drives the new session.
+    // If already signed in, sign out first so Logto sees a clean session
+    // and runs the OTT flow for the *invited* user. Returning to the same
+    // /invite URL preserves the token + email in the query string.
+    if (isAuthenticated) {
+      if (signOutTriggered) return;
+      signOutTriggered = true;
+      void signOut(window.location.href);
+      return;
+    }
+
+    if (signInTriggered) return;
     signInTriggered = true;
-    const redirectUri = `${window.location.origin}/callback`;
+
+    // The Logto Browser SDK exposes `loginHint` as a first-class option;
+    // putting `login_hint` in `extraParams` separately would result in the
+    // param appearing twice on the /oidc/auth URL. Keep one_time_token in
+    // extraParams (no first-class field for it).
     void signIn({
-      redirectUri,
-      clearTokens: false,
+      redirectUri: callbackUri(),
+      loginHint: email,
+      firstScreen: "sign-in",
       extraParams: {
         one_time_token: token,
-        login_hint: email,
       },
     }).catch((exc) => {
       signInTriggered = false;
@@ -69,27 +87,7 @@ function InvitePage() {
         "We couldn't start the sign-in flow with this link. Try requesting a fresh invite.",
       );
     });
-  }, [token, email, signIn]);
-
-  // Already signed in? Offer a quick path forward instead of silently
-  // swapping sessions.
-  if (isAuthenticated && !signInTriggered && !error) {
-    return (
-      <Frame>
-        <p className="mt-6 text-sm text-graphite">
-          You're already signed in. Head back to the{" "}
-          <a
-            href="/invoices"
-            className="font-semibold text-navy underline hover:text-amber"
-          >
-            invoice queue
-          </a>
-          , or sign out first to redeem this invite link for a different
-          account.
-        </p>
-      </Frame>
-    );
-  }
+  }, [token, email, signIn, signOut, isAuthenticated, isLoading]);
 
   return (
     <Frame>
@@ -104,11 +102,9 @@ function InvitePage() {
             />
           </div>
           <p className="mt-3 text-sm text-slate-600">
-            Signing you in with your invite link…
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            If this takes more than a few seconds, you may need to ask your
-            admin to enable Email sign-in in Logto.
+            {isAuthenticated
+              ? "Signing you out so we can redeem your invite link…"
+              : "Signing you in with your invite link…"}
           </p>
         </>
       )}

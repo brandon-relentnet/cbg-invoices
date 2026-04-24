@@ -154,6 +154,37 @@ async def create_resource(
     return resp.json()
 
 
+async def configure_sign_in_experience(
+    client: httpx.AsyncClient, endpoint: str, token: str
+) -> None:
+    """Force email-first sign-up with no password requirement.
+
+    Without this Logto's default SIE requires a *username* identifier on
+    sign-up — which means a freshly invited user clicking a magic link gets
+    bounced through a username/password prompt instead of the seamless
+    one-time-token flow.
+    """
+    body = {
+        "signUp": {
+            "identifiers": ["email"],
+            "password": False,
+            "verify": True,
+            "secondaryIdentifiers": [],
+        },
+    }
+    resp = await client.patch(
+        f"{endpoint}/api/sign-in-exp",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=body,
+    )
+    if resp.status_code >= 400:
+        print(
+            f"Failed to update sign-in experience: {resp.status_code} {resp.text}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def write_env_logto(app_id: str, resource_indicator: str) -> Path:
     """Write generated values so the user can append them to .env."""
     out = Path(".env.logto")
@@ -215,6 +246,11 @@ async def main() -> None:
             info(f"Creating API resource: {API_RESOURCE_NAME} ({resource_indicator})")
             resource = await create_resource(client, endpoint, token, resource_indicator)
             ok(f"Created API resource (indicator: {resource['indicator']})")
+
+        # Sign-in experience: email-first sign-up so magic-link invites work
+        info("Configuring sign-in experience (email-first sign-up)…")
+        await configure_sign_in_experience(client, endpoint, token)
+        ok("Sign-in experience configured")
 
     out_path = write_env_logto(app["id"], resource["indicator"])
 
