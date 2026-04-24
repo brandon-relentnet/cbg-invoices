@@ -52,8 +52,11 @@ export function useInvoice(id: string | undefined) {
     refetchInterval: (query) => {
       const data = query.state.data as Invoice | undefined;
       if (!data) return false;
-      // Keep polling while extraction is in flight
-      return data.status === "extracting" || data.status === "received" ? 2000 : false;
+      // Keep polling while extraction or QBO posting is in flight.
+      // Stop once extraction_failed/ready_for_review/posted_to_qbo/rejected.
+      if (data.status === "extracting" || data.status === "received") return 2000;
+      if (data.status === "approved" && !data.qbo_post_error) return 2000;
+      return false;
     },
   });
 }
