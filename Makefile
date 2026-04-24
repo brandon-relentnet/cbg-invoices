@@ -7,7 +7,8 @@ down:
 	docker compose down
 
 restart:
-	docker compose restart backend frontend
+	# Force-recreate picks up .env changes (plain restart doesn't re-read env_file)
+	docker compose up -d --force-recreate --no-deps backend frontend
 
 logs:
 	docker compose logs -f
@@ -28,6 +29,10 @@ migration:
 	docker compose exec backend alembic revision --autogenerate -m "$(msg)"
 
 logto-setup:
+	# Recreate the backend so it picks up the latest .env values
+	# (docker compose restart does NOT re-read env_file)
+	docker compose up -d --force-recreate --no-deps backend
+	@sleep 2
 	docker compose exec backend python scripts/logto_setup.py
 
 shell:
