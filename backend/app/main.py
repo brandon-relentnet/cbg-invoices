@@ -36,6 +36,16 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Starting Cambridge Invoice Portal backend (env=%s)", settings.app_env)
+    # Best-effort role bootstrap. If Logto M2M isn't configured yet we swallow
+    # the error so the backend still starts — the /team page surfaces the
+    # misconfiguration in that case.
+    try:
+        from app.services import logto_admin
+
+        await logto_admin.ensure_app_roles()
+        await logto_admin.seed_initial_owner()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Role bootstrap skipped: %s", exc)
     yield
     log.info("Shutting down")
 

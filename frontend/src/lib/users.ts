@@ -5,14 +5,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
 
+export type AppRole = "owner" | "admin" | "member";
+
+export const ROLE_RANK: Record<AppRole, number> = {
+  owner: 3,
+  admin: 2,
+  member: 1,
+};
+
 export interface TeamMember {
   id: string;
   email: string | null;
   name: string | null;
   username: string | null;
+  role: AppRole | null;
+  needs_password: boolean;
   created_at: number;
   last_sign_in_at: number | null;
 }
+
+export interface MeInfo extends TeamMember {}
 
 interface UsersResponse {
   users: TeamMember[];
@@ -66,6 +78,62 @@ export function useRemoveUser() {
       void qc.invalidateQueries({ queryKey: USERS_KEY });
     },
   });
+}
+
+const ME_KEY = ["users", "me"] as const;
+
+export function useMe() {
+  const { request } = useApi();
+  return useQuery({
+    queryKey: ME_KEY,
+    queryFn: () => request<MeInfo>("/api/users/me"),
+    staleTime: 30_000,
+    // 410 = stale session (user deleted). Don't retry, let _authed.tsx
+    // detect the status and sign out.
+    retry: (count, error) => {
+      const status = (error as { status?: number } | null)?.status;
+      if (status === 410 || status === 401 || status === 403) return false;
+      return count < 1;
+    },
+  });
+}
+
+export function useSetMyPassword() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (password: string) =>
+      request<null>("/api/users/me/password", {
+        method: "POST",
+        body: { password } as unknown as BodyInit,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ME_KEY });
+      void qc.invalidateQueries({ queryKey: USERS_KEY });
+    },
+  });
+}
+
+export function useChangeRole() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { userId: string; role: AppRole }) =>
+      request<TeamMember>(`/api/users/${args.userId}/role`, {
+        method: "POST",
+        body: { role: args.role } as unknown as BodyInit,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: USERS_KEY });
+    },
+  });
+}
+
+/** Compare two roles — returns positive when a outranks b. */
+export function roleRankDelta(a: AppRole | null, b: AppRole | null): number {
+  const av = a ? ROLE_RANK[a] : 0;
+  const bv = b ? ROLE_RANK[b] : 0;
+  return av - bv;
 }
 
 /** Convenience label that falls back sensibly across missing fields. */

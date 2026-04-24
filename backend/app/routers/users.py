@@ -1,13 +1,19 @@
 """Team management endpoints.
 
-Anyone signed in can manage the team (flat model). The backend uses the
-configured Logto M2M credentials to talk to Logto's Management API, and
-sends invite emails via Resend.
+Role model:
+  - owner : cannot be removed, can promote/demote anyone, can remove admins
+  - admin : can invite/remove members, promote members to admin
+  - member: can do invoice work, no team management
+
+Enforcement lives in this router via the require_admin / require_owner
+helpers. Roles are stored in Logto's native role system and fetched per-
+request (small team size — no caching yet).
 """
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+import re
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
@@ -21,13 +27,23 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["users"])
 
 
+AppRole = Literal["owner", "admin", "member"]
+ROLE_RANK: dict[str, int] = {"owner": 3, "admin": 2, "member": 1}
+
+
 class UserOut(BaseModel):
     id: str
     email: str | None
     name: str | None
     username: str | None
+    role: AppRole | None
+    needs_password: bool
     created_at: int
     last_sign_in_at: int | None
+
+
+class MeResponse(UserOut):
+    """Current-user view — same shape as UserOut but semantically separate."""
 
 
 class UserListResponse(BaseModel):
@@ -49,15 +65,38 @@ class InviteUserResponse(BaseModel):
     fallback_notice: str | None = None
 
 
-def _serialize(u: logto_admin.LogtoUser) -> UserOut:
+async def _serialize(u: logto_admin.LogtoUser) -> UserOut:
+    """Attach role + needs_password to the DTO via two cheap Logto lookups."""
+    role = await logto_admin.user_app_role(u.id)
+    try:
+        custom = await logto_admin.get_user_custom_data(u.id)
+    except logto_admin.LogtoAdminError:
+        custom = {}
+    needs_password = bool(custom.get("needs_password"))
     return UserOut(
         id=u.id,
         email=u.primary_email,
         name=u.name,
         username=u.username,
+        role=role,  # type: ignore[arg-type]
+        needs_password=needs_password,
         created_at=u.created_at,
         last_sign_in_at=u.last_sign_in_at,
     )
+
+
+async def _get_actor_role(user_id: str) -> AppRole:
+    """Fetch the acting user's role. Defaults to 'member' if unset."""
+    role = await logto_admin.user_app_role(user_id)
+    return role or "member"  # type: ignore[return-value]
+
+
+def _require(actor_role: AppRole, required: AppRole) -> None:
+    if ROLE_RANK[actor_role] < ROLE_RANK[required]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Requires {required} role — you're {actor_role}",
+        )
 
 
 @router.get("", response_model=UserListResponse)
@@ -71,7 +110,77 @@ async def list_team(
     except logto_admin.LogtoAdminError as exc:
         log.exception("Failed to list Logto users")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return UserListResponse(users=[_serialize(u) for u in users])
+    serialized = [await _serialize(u) for u in users]
+    return UserListResponse(users=serialized)
+
+
+@router.get("/me", response_model=MeResponse)
+async def get_me(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Return the current user's profile + role + needs_password flag.
+
+    Returns a 410 Gone if the user's Logto account no longer exists — the
+    frontend treats this as a signal to clear the stale session.
+    """
+    try:
+        logto_user = await logto_admin.get_user(user.id)
+    except logto_admin.LogtoAdminNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except logto_admin.LogtoAdminError as exc:
+        log.exception("Failed to load current user profile")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if logto_user is None:
+        raise HTTPException(
+            status_code=410,
+            detail="Your account no longer exists. Please sign out and back in.",
+        )
+    dto = await _serialize(logto_user)
+    return MeResponse(**dto.model_dump())
+
+
+class SetPasswordRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
+
+
+@router.post("/me/password", status_code=204)
+async def set_my_password(
+    body: SetPasswordRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Let the signed-in user set their own password.
+
+    Runs password policy client-side-lite (length + class diversity) and then
+    calls Logto's Management API to persist it. Clears the needs_password
+    flag from custom_data on success.
+    """
+    errors = _validate_password(body.password)
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    try:
+        await logto_admin.set_user_password(user.id, body.password)
+        await logto_admin.patch_user_custom_data(user.id, {"needs_password": False})
+    except logto_admin.LogtoAdminError as exc:
+        log.exception("Failed to set password")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+
+def _validate_password(pw: str) -> list[str]:
+    """Mirror Logto's default policy so we give a better error than 422."""
+    errs: list[str] = []
+    if len(pw) < 8:
+        errs.append("Password must be at least 8 characters")
+    classes = [
+        bool(re.search(r"[a-z]", pw)),
+        bool(re.search(r"[A-Z]", pw)),
+        bool(re.search(r"\d", pw)),
+        bool(re.search(r"[^\w\s]", pw)),
+    ]
+    if sum(classes) < 3:
+        errs.append(
+            "Password must include at least three of: lowercase, uppercase, number, symbol"
+        )
+    return errs
 
 
 @router.post("/invite", response_model=InviteUserResponse, status_code=201)
@@ -81,12 +190,15 @@ async def invite_user(
 ):
     """Invite a new user OR resend an invite to an existing one.
 
-    Flow:
-      1. Create the Logto user (if missing) without a password.
-      2. Generate a one-time token tied to the email (7-day validity).
-      3. Send an email via Resend with a magic link to `/invite?token=…&email=…`.
-         The frontend route consumes the token and completes sign-in via Logto.
+    Requires admin role. Flow:
+      1. Create the Logto user (if missing) without a password, marked
+         `needs_password=true` in custom data and assigned the member role.
+      2. Mint a fresh one-time token tied to the email (7-day validity).
+      3. Email the magic link via Resend.
     """
+    actor_role = await _get_actor_role(inviter.id)
+    _require(actor_role, "admin")
+
     try:
         existing = await logto_admin.find_user_by_email(body.email)
     except logto_admin.LogtoAdminNotConfigured as exc:
@@ -102,7 +214,14 @@ async def invite_user(
         resent = True
     else:
         try:
-            user, _ = await logto_admin.create_user(email=body.email, name=body.name)
+            user = await logto_admin.create_user(
+                email=body.email,
+                name=body.name,
+                password=None,
+                custom_data={"needs_password": True, "invited_by": inviter.id},
+            )
+            # New users default to the member role.
+            await logto_admin.replace_user_app_role(user.id, "member")
         except logto_admin.LogtoAdminError as exc:
             status = exc.status_code or 502
             log.exception("Failed to create Logto user")
@@ -163,8 +282,29 @@ async def remove_user(
     user_id: str,
     user: Annotated[CurrentUser, Depends(get_current_user)],
 ):
+    """Remove a team member.
+
+    Rules:
+      - You can't remove yourself
+      - Members can't remove anyone (admin required)
+      - Admins can remove members only
+      - Owners can remove admins and members
+      - Owner can never be removed via the API
+    """
     if user_id == user.id:
         raise HTTPException(status_code=400, detail="You can't remove yourself")
+    actor_role = await _get_actor_role(user.id)
+    _require(actor_role, "admin")
+
+    target_role = await logto_admin.user_app_role(user_id)
+    if target_role == "owner":
+        raise HTTPException(status_code=403, detail="The owner can't be removed")
+    if target_role == "admin" and actor_role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner can remove an admin",
+        )
+
     try:
         await logto_admin.delete_user(user_id)
     except logto_admin.LogtoAdminNotConfigured as exc:
@@ -174,6 +314,64 @@ async def remove_user(
             raise HTTPException(status_code=404, detail="User not found") from exc
         log.exception("Failed to delete Logto user")
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+
+class ChangeRoleRequest(BaseModel):
+    role: AppRole
+
+
+@router.post("/{user_id}/role", response_model=UserOut)
+async def change_role(
+    user_id: str,
+    body: ChangeRoleRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Promote/demote a user.
+
+    Rules:
+      - Must be admin+ to change anyone's role
+      - Only the owner can set 'owner' (handing off ownership)
+      - Admins can move members ↔ members (no-op) or member → admin / admin → member
+      - Admins cannot touch the owner
+      - A user can't change their own role
+    """
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="You can't change your own role")
+    actor_role = await _get_actor_role(user.id)
+    _require(actor_role, "admin")
+
+    target_role = await logto_admin.user_app_role(user_id)
+    if target_role == "owner" and actor_role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner can modify the owner role",
+        )
+    if body.role == "owner" and actor_role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner can grant the owner role",
+        )
+
+    try:
+        await logto_admin.replace_user_app_role(user_id, body.role)
+        # If owner is handing off ownership (self→admin), they're already
+        # blocked above via "can't change own role". If owner is moving
+        # someone else to owner, we demote the existing owner(s) to admin.
+        if body.role == "owner":
+            all_users = await logto_admin.list_users(limit=100)
+            for u in all_users:
+                if u.id == user_id:
+                    continue
+                if await logto_admin.user_app_role(u.id) == "owner":
+                    await logto_admin.replace_user_app_role(u.id, "admin")
+
+        logto_user = await logto_admin.get_user(user_id)
+    except logto_admin.LogtoAdminError as exc:
+        log.exception("Failed to change role")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+    if logto_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await _serialize(logto_user)
 
 
 # ──────────────────────────────────────────────────────────────────────────

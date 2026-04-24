@@ -1,4 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
+import { useLogto } from "@logto/react";
 import {
   DocumentTextIcon,
   BuildingOffice2Icon,
@@ -6,9 +7,12 @@ import {
   ClockIcon,
   Cog6ToothIcon,
   UsersIcon,
+  ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/outline";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/cn";
+import { postSignOutUri, useUser } from "@/lib/auth";
+import { useMe } from "@/lib/users";
 
 interface NavItem {
   to: string;
@@ -67,10 +71,88 @@ export function Sidebar() {
           </ul>
         </nav>
 
-        <div className="px-6 py-4 text-[11px] text-slate-500 border-t border-stone/10">
+        <AccountCard />
+
+        <div className="px-6 py-3 text-[11px] text-slate-500 border-t border-stone/10">
           <div className="font-mono">v0.1.0</div>
         </div>
       </div>
     </aside>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Account card at the bottom of the sidebar — shows who you're signed in as
+// plus a sign-out action.
+// ──────────────────────────────────────────────────────────────────────────
+
+function AccountCard() {
+  const user = useUser();
+  const me = useMe();
+  const { signOut } = useLogto();
+
+  const role = me.data?.role ?? null;
+  const name = user?.name?.trim() || user?.email || "Signed in";
+  const email = user?.email ?? null;
+
+  const initials = computeInitials(name, email);
+
+  return (
+    <div className="px-4 pt-3 pb-3 border-t border-stone/10 bg-black/20">
+      <div className="flex items-center gap-3">
+        <span
+          aria-hidden
+          className="flex-shrink-0 inline-flex items-center justify-center h-9 w-9 bg-amber text-navy text-xs font-bold tracking-wider"
+        >
+          {initials}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-stone truncate leading-tight">
+            {name}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            {role && <RolePill role={role} />}
+            {email && email !== name && (
+              <div className="text-[11px] text-slate-400 truncate">{email}</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => void signOut(postSignOutUri())}
+        className="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400 hover:text-stone py-1.5 border border-stone/15 hover:border-amber transition-colors"
+      >
+        <ArrowRightOnRectangleIcon className="h-3.5 w-3.5" />
+        Sign out
+      </button>
+    </div>
+  );
+}
+
+function RolePill({ role }: { role: "owner" | "admin" | "member" }) {
+  const cls: Record<typeof role, string> = {
+    owner: "bg-amber/25 text-amber",
+    admin: "bg-white/10 text-stone",
+    member: "bg-white/5 text-slate-400",
+  };
+  return (
+    <span
+      className={cn(
+        "inline-block text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5",
+        cls[role],
+      )}
+    >
+      {role}
+    </span>
+  );
+}
+
+function computeInitials(name: string, email: string | null): string {
+  const source = name || email || "?";
+  const parts = source.split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length === 0) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }

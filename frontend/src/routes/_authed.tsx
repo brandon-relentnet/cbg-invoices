@@ -2,7 +2,9 @@ import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useLogto } from "@logto/react";
 import { useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
+import { PasswordSetupModal } from "@/components/auth/PasswordSetupModal";
 import { callbackUri } from "@/lib/auth";
+import { useMe } from "@/lib/users";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -59,6 +61,27 @@ function AuthedLayout() {
   return (
     <AppShell>
       <Outlet />
+      <PasswordSetupGuard />
     </AppShell>
   );
+}
+
+// Loads the current user's /me profile and:
+//  - shows the password-setup modal if needs_password is true
+//  - force-signs-out on 410 Gone (account no longer exists in Logto)
+function PasswordSetupGuard() {
+  const { signOut } = useLogto();
+  const me = useMe();
+
+  useEffect(() => {
+    const err = me.error as (Error & { status?: number }) | null;
+    if (err && err.status === 410) {
+      // Stale session — log out and let the user sign back in fresh.
+      void signOut(window.location.origin);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me.error]);
+
+  const needs = me.data?.needs_password ?? false;
+  return <PasswordSetupModal open={needs} />;
 }

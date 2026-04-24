@@ -183,24 +183,57 @@ def _generate_temp_password(length: int = 16) -> str:
 
 
 async def create_user(
-    *, email: str, name: str | None = None, password: str | None = None
-) -> tuple[LogtoUser, str]:
-    """Create a new user. Returns the user and the generated/provided password.
+    *,
+    email: str,
+    name: str | None = None,
+    password: str | None = None,
+    custom_data: dict[str, Any] | None = None,
+) -> LogtoUser:
+    """Create a new user. Password is optional for magic-link-only accounts.
 
-    The caller is responsible for sharing the password with the new user —
-    Logto doesn't send invite emails by default in self-hosted mode.
+    `custom_data` is the free-form per-user metadata store in Logto. We use it
+    to flag accounts that haven't set a password yet via the
+    `needs_password` key so the UI can prompt on first sign-in.
     """
-    temp_password = password or _generate_temp_password()
-    body: dict[str, Any] = {
-        "primaryEmail": email,
-        "password": temp_password,
-    }
+    body: dict[str, Any] = {"primaryEmail": email}
+    if password:
+        body["password"] = password
     if name:
         body["name"] = name
+    if custom_data is not None:
+        body["customData"] = custom_data
     data = await _request("POST", "/api/users", json=body)
     if not isinstance(data, dict):
         raise LogtoAdminError(f"Unexpected create_user response: {data!r}")
-    return LogtoUser.from_api(data), temp_password
+    return LogtoUser.from_api(data)
+
+
+async def set_user_password(user_id: str, password: str) -> None:
+    """Set/replace a user's password via Management API."""
+    await _request(
+        "PATCH",
+        f"/api/users/{user_id}/password",
+        json={"password": password},
+    )
+
+
+async def get_user_custom_data(user_id: str) -> dict[str, Any]:
+    data = await _request("GET", f"/api/users/{user_id}/custom-data")
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+async def patch_user_custom_data(user_id: str, merge: dict[str, Any]) -> dict[str, Any]:
+    """Merge keys into a user's customData. Does NOT replace — PATCH semantics."""
+    data = await _request(
+        "PATCH",
+        f"/api/users/{user_id}/custom-data",
+        json={"customData": merge},
+    )
+    if isinstance(data, dict):
+        return data
+    return {}
 
 
 async def delete_user(user_id: str) -> None:
@@ -224,6 +257,182 @@ async def find_user_by_email(email: str) -> LogtoUser | None:
         if (raw.get("primaryEmail") or "").lower() == email_lower:
             return LogtoUser.from_api(raw)
     return None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Roles
+#
+# We use Logto's native role system with three app roles:
+#   - owner  : cannot be removed, can promote/demote anyone, can remove admins
+#   - admin  : can invite/remove members, can promote members to admin
+#   - member : can work with invoices, no team management
+#
+# Logto stores role names uppercased; we treat them case-insensitively at our
+# boundary and canonicalize to lowercase for storage/comparison.
+# ──────────────────────────────────────────────────────────────────────────
+
+APP_ROLE_NAMES = ("owner", "admin", "member")
+
+
+@dataclass
+class LogtoRole:
+    id: str
+    name: str  # canonical lowercase
+    description: str | None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> "LogtoRole":
+        return cls(
+            id=raw["id"],
+            name=(raw.get("name") or "").lower(),
+            description=raw.get("description"),
+        )
+
+
+async def list_roles() -> list[LogtoRole]:
+    data = await _request("GET", "/api/roles?page=1&page_size=100")
+    if not isinstance(data, list):
+        return []
+    return [LogtoRole.from_api(r) for r in data]
+
+
+async def ensure_app_roles() -> dict[str, LogtoRole]:
+    """Create any missing owner/admin/member roles. Idempotent.
+
+    Returns a mapping from canonical lowercase role name → LogtoRole.
+    """
+    existing = {r.name: r for r in await list_roles()}
+    descriptions = {
+        "owner":
+            "Full control of the invoice portal. Cannot be removed by other "
+            "team members. Can promote and demote admins.",
+        "admin":
+            "Can invite and remove members, and promote members to admin. "
+            "Cannot remove or affect the owner.",
+        "member":
+            "Can review, approve, and post invoices. Cannot manage the team.",
+    }
+    for name in APP_ROLE_NAMES:
+        if name in existing:
+            continue
+        try:
+            data = await _request(
+                "POST",
+                "/api/roles",
+                json={
+                    "name": name,
+                    "description": descriptions[name],
+                    "type": "User",
+                },
+            )
+        except LogtoAdminError as exc:
+            # Duplicate name race (e.g., concurrent startup) — re-fetch.
+            if exc.status_code == 422:
+                continue
+            raise
+        if isinstance(data, dict):
+            existing[name] = LogtoRole.from_api(data)
+    # Final refresh to handle race cases
+    if any(n not in existing for n in APP_ROLE_NAMES):
+        existing = {r.name: r for r in await list_roles()}
+    return existing
+
+
+async def get_user_roles(user_id: str) -> list[LogtoRole]:
+    data = await _request("GET", f"/api/users/{user_id}/roles?page=1&page_size=100")
+    if not isinstance(data, list):
+        return []
+    return [LogtoRole.from_api(r) for r in data]
+
+
+async def assign_user_role(user_id: str, role_id: str) -> None:
+    """Add a role to a user. Idempotent — ignores 'already assigned' errors."""
+    try:
+        await _request(
+            "POST",
+            f"/api/users/{user_id}/roles",
+            json={"roleIds": [role_id]},
+        )
+    except LogtoAdminError as exc:
+        # 422 when the user already has that role — treat as success.
+        if exc.status_code in (409, 422):
+            return
+        raise
+
+
+async def remove_user_role(user_id: str, role_id: str) -> None:
+    try:
+        await _request("DELETE", f"/api/users/{user_id}/roles/{role_id}")
+    except LogtoAdminError as exc:
+        if exc.status_code == 404:
+            return
+        raise
+
+
+async def user_app_role(user_id: str) -> str | None:
+    """Return the canonical app role name for a user, or None if unset."""
+    roles = await get_user_roles(user_id)
+    for r in roles:
+        if r.name in APP_ROLE_NAMES:
+            return r.name
+    return None
+
+
+async def seed_initial_owner() -> str | None:
+    """If no user currently holds 'owner', promote the longest-tenured user.
+
+    Runs idempotently on backend startup. Returns the user id that was
+    promoted, or None if no change was needed / no users exist yet.
+    """
+    users = await list_users(limit=100)
+    if not users:
+        return None
+    # Sort oldest-first so the founding account becomes owner deterministically.
+    users.sort(key=lambda u: u.created_at or 0)
+    # Check if anyone already has owner.
+    roles = await ensure_app_roles()
+    owner_role = roles.get("owner")
+    if owner_role is None:
+        return None
+    # Gather existing role assignments for each user (parallelizable, but small N).
+    existing_owner: str | None = None
+    for u in users:
+        u_roles = await get_user_roles(u.id)
+        if any(r.name == "owner" for r in u_roles):
+            existing_owner = u.id
+            break
+    if existing_owner:
+        log.info("Owner already set: %s", existing_owner)
+        return None
+    seed_user = users[0]
+    log.warning(
+        "No owner assigned — promoting %s (%s) to owner",
+        seed_user.id,
+        seed_user.primary_email,
+    )
+    await replace_user_app_role(seed_user.id, "owner")
+    return seed_user.id
+
+
+async def replace_user_app_role(user_id: str, role_name: str) -> None:
+    """Ensure the user has exactly one of owner/admin/member.
+
+    Removes the other app roles if present; adds the target role if missing.
+    Leaves non-app roles (e.g., Logto built-ins) untouched.
+    """
+    target = role_name.lower()
+    if target not in APP_ROLE_NAMES:
+        raise ValueError(f"Unknown app role: {role_name}")
+    roles_by_name = await ensure_app_roles()
+    current = await get_user_roles(user_id)
+    current_app_names = {r.name for r in current if r.name in APP_ROLE_NAMES}
+    # Remove any app roles that aren't the target
+    for role in current:
+        if role.name in APP_ROLE_NAMES and role.name != target:
+            await remove_user_role(user_id, role.id)
+    # Add the target if missing
+    if target not in current_app_names:
+        await assign_user_role(user_id, roles_by_name[target].id)
 
 
 async def create_one_time_token(

@@ -1,9 +1,12 @@
 /**
- * Team management page — list members, invite, remove, resend invite.
+ * Team management page — list members, invite, remove, resend invite,
+ * change roles.
  *
- * Flat auth model: any signed-in user can manage the team. The backend uses
- * the Logto Management API (via the configured M2M app) to add/remove users,
- * and sends invite emails via Resend.
+ * Role rules (enforced by the backend; UI mirrors for clarity):
+ *   - Only admins and owners can see the "Invite member" button
+ *   - Only admins and owners can invite, resend invites, or change roles
+ *   - Only the owner can promote anyone to admin or demote an admin
+ *   - The owner can't be removed; admins can only remove members
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
@@ -21,13 +24,17 @@ import {
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { useUser } from "@/lib/auth";
+import { Select } from "@/components/ui/Select";
 import {
   memberInitials,
   memberLabel,
+  roleRankDelta,
+  useChangeRole,
   useInviteUser,
+  useMe,
   useRemoveUser,
   useUsers,
+  type AppRole,
   type TeamMember,
 } from "@/lib/users";
 
@@ -45,15 +52,20 @@ interface InviteResult {
 }
 
 function TeamPage() {
-  const currentUser = useUser();
+  const meQuery = useMe();
+  const me = meQuery.data ?? null;
   const { data, isLoading, error } = useUsers();
   const invite = useInviteUser();
   const remove = useRemoveUser();
+  const changeRole = useChangeRole();
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<TeamMember | null>(null);
   const [lastInvite, setLastInvite] = useState<InviteResult | null>(null);
   const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const canManage = me?.role === "owner" || me?.role === "admin";
+  const isOwner = me?.role === "owner";
 
   async function handleInvite(payload: { email: string; name: string }) {
     const res = await invite.mutateAsync({
@@ -98,26 +110,44 @@ function TeamPage() {
     setMemberToRemove(null);
   }
 
+  async function handleRoleChange(member: TeamMember, role: AppRole) {
+    if (role === member.role) return;
+    await changeRole.mutateAsync({ userId: member.id, role });
+  }
+
   return (
     <>
       <PageHeader
         title="Team"
         accent="Members"
-        subtitle="Invite Cambridge staff and manage access to the invoice portal."
+        subtitle={
+          canManage
+            ? "Invite Cambridge staff and manage access to the invoice portal."
+            : "Your team's members. Ask an admin if you need to invite someone."
+        }
         actions={
-          <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
-            <UserPlusIcon className="h-4 w-4" />
-            Invite member
-          </Button>
+          canManage ? (
+            <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
+              <UserPlusIcon className="h-4 w-4" />
+              Invite member
+            </Button>
+          ) : undefined
         }
       />
 
-      {/* Invite-result banner (shown after invite or resend) */}
       {lastInvite && (
         <InviteResultBanner
           invite={lastInvite}
           onDismiss={() => setLastInvite(null)}
         />
+      )}
+
+      {!canManage && me && (
+        <div className="mb-4 p-3 bg-white border-l-2 border-slate-300 text-xs text-slate-500">
+          You're signed in as a <strong className="text-graphite">member</strong> — you can
+          see the team but not make changes. Ask an admin to adjust roles or invite
+          new people.
+        </div>
       )}
 
       <div className="bg-white border-t-4 border-amber">
@@ -140,9 +170,6 @@ function TeamPage() {
         {!isLoading && !error && (data?.users.length ?? 0) === 0 && (
           <div className="px-6 py-14 text-center">
             <p className="font-display text-lg text-navy">No team members yet.</p>
-            <p className="text-sm text-slate-500 mt-1">
-              Invite your first teammate using the button above.
-            </p>
           </div>
         )}
         {!isLoading && !error && (data?.users.length ?? 0) > 0 && (
@@ -151,7 +178,7 @@ function TeamPage() {
               <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
                 <th className="px-4 py-3 text-left">Member</th>
                 <th className="px-4 py-3 text-left">Email</th>
-                <th className="px-4 py-3 text-left">Added</th>
+                <th className="px-4 py-3 text-left">Role</th>
                 <th className="px-4 py-3 text-left">Last sign-in</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -161,10 +188,14 @@ function TeamPage() {
                 <MemberRow
                   key={m.id}
                   member={m}
-                  isYou={m.id === currentUser?.id}
+                  me={me}
+                  canManage={canManage}
+                  isOwner={isOwner}
                   onRemove={() => setMemberToRemove(m)}
                   onResend={() => handleResend(m)}
+                  onChangeRole={(role) => handleRoleChange(m, role)}
                   resending={resendingId === m.id}
+                  roleChangePending={changeRole.isPending}
                 />
               ))}
             </tbody>
@@ -197,18 +228,48 @@ function TeamPage() {
 
 function MemberRow({
   member,
-  isYou,
+  me,
+  canManage,
+  isOwner,
   onRemove,
   onResend,
+  onChangeRole,
   resending,
+  roleChangePending,
 }: {
   member: TeamMember;
-  isYou: boolean;
+  me: TeamMember | null;
+  canManage: boolean;
+  isOwner: boolean;
   onRemove: () => void;
   onResend: () => void;
+  onChangeRole: (role: AppRole) => void;
   resending: boolean;
+  roleChangePending: boolean;
 }) {
-  const canResend = Boolean(member.email) && !isYou;
+  const isYou = member.id === me?.id;
+  const memberIsOwner = member.role === "owner";
+  const memberIsAdmin = member.role === "admin";
+
+  // Role-change gate: admins can only touch members (not other admins, not owner).
+  // Owner can touch anyone except themselves.
+  const canChangeRole =
+    canManage &&
+    !isYou &&
+    (isOwner ? !memberIsOwner : !memberIsOwner && !memberIsAdmin);
+
+  // Remove gate mirrors the backend:
+  //   - can't remove self
+  //   - can't remove owner
+  //   - admins can only remove members (not other admins)
+  const canRemove =
+    canManage &&
+    !isYou &&
+    !memberIsOwner &&
+    (isOwner || !memberIsAdmin);
+
+  const canResend = canManage && Boolean(member.email) && !isYou;
+
   return (
     <tr className="border-b border-stone/60 hover:bg-amber/5 transition-colors">
       <td className="px-4 py-3">
@@ -228,9 +289,9 @@ function MemberRow({
                 </span>
               )}
             </div>
-            {member.username && (
-              <div className="text-xs text-slate-500 font-mono">
-                @{member.username}
+            {member.needs_password && (
+              <div className="text-[10px] uppercase tracking-wider text-amber mt-0.5">
+                Password not set yet
               </div>
             )}
           </div>
@@ -239,8 +300,17 @@ function MemberRow({
       <td className="px-4 py-3 text-sm text-slate-600 truncate max-w-[22ch]">
         {member.email || <span className="text-slate-400">—</span>}
       </td>
-      <td className="px-4 py-3 text-sm text-slate-500">
-        {formatEpochMs(member.created_at)}
+      <td className="px-4 py-3">
+        {canChangeRole ? (
+          <RoleSelect
+            current={member.role}
+            onChange={onChangeRole}
+            disabled={roleChangePending}
+            canPromoteToOwner={isOwner}
+          />
+        ) : (
+          <RoleStaticBadge role={member.role} />
+        )}
       </td>
       <td className="px-4 py-3 text-sm text-slate-500">
         {member.last_sign_in_at
@@ -268,19 +338,63 @@ function MemberRow({
               {resending ? "Sending…" : "Resend invite"}
             </button>
           )}
-          <button
-            type="button"
-            onClick={onRemove}
-            disabled={isYou}
-            title={isYou ? "You can't remove yourself" : "Remove from team"}
-            className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-700 disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <TrashIcon className="h-3.5 w-3.5" />
-            Remove
-          </button>
+          {canRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              title="Remove from team"
+              className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-700"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              Remove
+            </button>
+          )}
         </div>
       </td>
     </tr>
+  );
+}
+
+function RoleSelect({
+  current,
+  onChange,
+  disabled,
+  canPromoteToOwner,
+}: {
+  current: AppRole | null;
+  onChange: (role: AppRole) => void;
+  disabled?: boolean;
+  canPromoteToOwner: boolean;
+}) {
+  return (
+    <Select
+      labelTone="quiet"
+      size="sm"
+      value={current ?? "member"}
+      onChange={(e) => onChange(e.target.value as AppRole)}
+      disabled={disabled}
+      className="min-w-[9rem]"
+    >
+      <option value="member">Member</option>
+      <option value="admin">Admin</option>
+      {canPromoteToOwner && <option value="owner">Owner (hand off)</option>}
+    </Select>
+  );
+}
+
+function RoleStaticBadge({ role }: { role: AppRole | null }) {
+  const cfg: Record<AppRole, { label: string; cls: string }> = {
+    owner: { label: "Owner", cls: "bg-amber/20 text-navy border-amber" },
+    admin: { label: "Admin", cls: "bg-navy text-stone border-navy" },
+    member: { label: "Member", cls: "bg-slate-100 text-slate-700 border-slate-300" },
+  };
+  const key = role ?? "member";
+  return (
+    <span
+      className={`inline-block text-[10px] font-bold uppercase tracking-widest px-2 py-1 border ${cfg[key].cls}`}
+    >
+      {cfg[key].label}
+    </span>
   );
 }
 
@@ -298,7 +412,7 @@ function formatEpochMs(ms: number | null): string {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Invite modal
+// Modals / banners (unchanged from previous)
 // ──────────────────────────────────────────────────────────────────────────
 
 function InviteModal({
@@ -351,7 +465,8 @@ function InviteModal({
               <div>
                 <h2 className="font-display text-xl text-navy">Invite member</h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  We'll email them a one-click sign-in link valid for 7 days.
+                  We'll email them a one-click sign-in link valid for 7 days. They
+                  start as a Member — promote them later if needed.
                 </p>
               </div>
               <button
@@ -401,10 +516,6 @@ function InviteModal({
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Invite result banner — replaces the old one-time-password banner
-// ──────────────────────────────────────────────────────────────────────────
-
 function InviteResultBanner({
   invite,
   onDismiss,
@@ -420,7 +531,7 @@ function InviteResultBanner({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // clipboard unavailable — no-op
+      // clipboard unavailable
     }
   }
 
@@ -430,9 +541,7 @@ function InviteResultBanner({
   return (
     <div
       className={`mb-4 p-4 border-l-2 flex items-start gap-3 ${
-        success
-          ? "bg-green-50 border-green-700"
-          : "bg-amber/10 border-amber"
+        success ? "bg-green-50 border-green-700" : "bg-amber/10 border-amber"
       }`}
     >
       {success ? (
@@ -475,10 +584,6 @@ function InviteResultBanner({
     </div>
   );
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Remove confirmation modal
-// ──────────────────────────────────────────────────────────────────────────
 
 function RemoveModal({
   open,
