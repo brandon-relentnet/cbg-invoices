@@ -29,6 +29,7 @@ services:
         condition: service_healthy
     environment:
       TRUST_PROXY_HEADER: 1
+      CI: "true" # non-interactive migrations
       DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/logto
       ENDPOINT: ${LOGTO_ENDPOINT}
       ADMIN_ENDPOINT: ${LOGTO_ADMIN_ENDPOINT}
@@ -37,6 +38,13 @@ services:
       - "3002:3002"
     networks:
       - invoice_portal_net
+    # On first boot, seed the `logto` database schema; on subsequent boots,
+    # --swe ("skip when existing") makes seed a no-op and alteration deploy
+    # applies any pending migrations. Both are idempotent.
+    entrypoint:
+      - sh
+      - -c
+      - npm run cli db seed -- --swe && npm run cli db alteration deploy latest && npm start
 
   backend:
     build:
