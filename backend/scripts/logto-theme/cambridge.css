@@ -68,42 +68,35 @@
   font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 
-/* Logo — replace Logto's default logo with the Cambridge wordmark text */
+/* Logo — replace Logto's default logo image with the Cambridge wordmark.
+   Using `content: url(...)` on the existing <img> swaps the src in place,
+   which keeps Logto's layout intact (size + spacing). */
 #app img[class*='logo'] {
-  display: none !important;
-}
-#app main[class*='main']::before {
-  content: 'Cambridge';
-  display: block;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--color-amber);
-  margin-bottom: 4px;
-}
-#app main[class*='main']::after {
-  content: 'Invoice Portal';
-  display: block;
-  font-family: 'DM Serif Display', Georgia, serif;
-  font-size: 28px;
-  color: var(--color-navy);
-  line-height: 1;
-  margin-top: -28px; /* pulled up so default heading sits below it */
-  margin-bottom: 24px;
-}
-/* Hide the title placeholder Logto would otherwise render in the slot */
-#app main[class*='main'] > div[class*='wrapper'] > div[class*='title']:first-child {
-  display: none !important;
+  /* SVG: amber kicker "CAMBRIDGE" + DM Serif Display "Invoice Portal" */
+  content: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 70' font-family='Plus Jakarta Sans, sans-serif'><text x='0' y='14' font-size='11' font-weight='700' letter-spacing='2.4' fill='%23c8923c'>CAMBRIDGE</text><text x='0' y='56' font-family='DM Serif Display, Georgia, serif' font-size='38' fill='%230b1b25'>Invoice Portal</text></svg>") !important;
+  width: 240px !important;
+  height: auto !important;
+  margin: 0 0 8px 0 !important;
 }
 
-/* Inputs — sharp corners, slate border, amber focus */
+/* Inputs — sharp corners, slate border, amber focus.
+   Logto's experience UI uses an animated floating label that translates
+   from inside the field up to the top border on focus. To keep that
+   working with our sharp-corner styling we need overflow: visible
+   throughout the chain so the label can escape, and a solid white
+   background on the label so it overlaps the border cleanly without
+   showing the input fill colour bleeding through. */
+#app form div[class*='inputField'],
+#app div[class*='inputField'] {
+  overflow: visible !important;
+}
 #app form div[class*='inputField'] > div,
 #app div[class*='inputField'] > div {
   background-color: rgba(237, 229, 216, 0.5) !important;
   border: 1px solid var(--color-border) !important;
   border-radius: 0 !important;
   outline: none !important;
+  overflow: visible !important;
 }
 #app form div[class*='inputField'] > div:focus-within,
 #app div[class*='inputField'] > div:focus-within {
@@ -120,8 +113,13 @@
   color: #94a3b8 !important;
 }
 
-/* Field labels */
-#app div[class*='label'] {
+/* Floating field label — solid white bg so it sits cleanly on the border
+   when raised, plus a touch of horizontal padding so the text doesn't
+   collide with the border line. */
+#app div[class*='inputField'] label,
+#app div[class*='inputField'] div[class*='label'] {
+  background-color: #ffffff !important;
+  padding: 0 6px !important;
   color: var(--color-graphite) !important;
   font-weight: 500 !important;
   font-size: 12px !important;

@@ -69,6 +69,12 @@ function InvitePage() {
     if (signInTriggered) return;
     signInTriggered = true;
 
+    // Important: do NOT set firstScreen here. Setting `first_screen=sign-in`
+    // makes Logto's OIDC redirect strip `one_time_token` + `login_hint` from
+    // the URL it forwards to the experience UI, defeating auto-consumption.
+    // Logto's experience UI auto-detects the OTT params on /sign-in and
+    // routes to /one-time-token internally.
+    //
     // The Logto Browser SDK exposes `loginHint` as a first-class option;
     // putting `login_hint` in `extraParams` separately would result in the
     // param appearing twice on the /oidc/auth URL. Keep one_time_token in
@@ -76,7 +82,6 @@ function InvitePage() {
     void signIn({
       redirectUri: callbackUri(),
       loginHint: email,
-      firstScreen: "sign-in",
       extraParams: {
         one_time_token: token,
       },
