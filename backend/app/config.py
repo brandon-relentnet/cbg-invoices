@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Logto
     logto_endpoint: str = "http://localhost:3001"
     logto_admin_endpoint: str = "http://localhost:3002"
+    # Server-to-server URL to reach Logto (e.g. from inside Docker use
+    # http://logto:3001). Defaults to logto_endpoint when unset, which is
+    # correct in production where both URLs collapse to the public hostname.
+    logto_internal_url: str = ""
     logto_m2m_app_id: str = ""
     logto_m2m_app_secret: str = ""
     logto_app_id: str = ""
@@ -65,6 +69,11 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         # Comma-separated additional origins could be added if needed
         return [self.app_base_url]
+
+    @property
+    def logto_internal_endpoint(self) -> str:
+        """Effective URL for server-to-server calls to Logto."""
+        return self.logto_internal_url or self.logto_endpoint
 
 
 @lru_cache

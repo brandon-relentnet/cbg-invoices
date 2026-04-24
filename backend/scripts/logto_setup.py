@@ -170,7 +170,12 @@ VITE_LOGTO_RESOURCE={resource_indicator}
 
 
 async def main() -> None:
-    endpoint = env("LOGTO_ENDPOINT")
+    # For server-to-server calls we use LOGTO_INTERNAL_URL (in Docker dev:
+    # http://logto:3001), falling back to LOGTO_ENDPOINT for production
+    # where the URL is the same either way.
+    endpoint = (
+        os.environ.get("LOGTO_INTERNAL_URL") or env("LOGTO_ENDPOINT")
+    ).rstrip("/")
     m2m_id = env("LOGTO_M2M_APP_ID")
     m2m_secret = env("LOGTO_M2M_APP_SECRET")
     resource_indicator = os.environ.get("LOGTO_RESOURCE") or "https://invoice-api.cambridgebg.com"

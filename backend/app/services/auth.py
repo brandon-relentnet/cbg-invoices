@@ -2,8 +2,11 @@
 
 The frontend receives tokens via Logto and forwards them as Bearer tokens.
 We verify:
-  1. Signature via JWKS from {LOGTO_ENDPOINT}/oidc/jwks (cached).
-  2. Issuer matches {LOGTO_ENDPOINT}/oidc.
+  1. Signature via JWKS from {LOGTO_INTERNAL_URL or LOGTO_ENDPOINT}/oidc/jwks.
+     The JWKS fetch is a server-to-server call, so in Docker dev it must use
+     the internal service hostname (http://logto:3001), not localhost.
+  2. Issuer matches {LOGTO_ENDPOINT}/oidc. This MUST be the public URL
+     because Logto signs that value into the token's `iss` claim.
   3. Audience contains our API resource indicator.
   4. Token not expired.
 """
@@ -49,7 +52,7 @@ _jwks_uri: str | None = None
 
 def _ensure_jwks() -> _JwksCache:
     global _jwks, _jwks_uri
-    uri = f"{settings.logto_endpoint.rstrip('/')}/oidc/jwks"
+    uri = f"{settings.logto_internal_endpoint.rstrip('/')}/oidc/jwks"
     if _jwks is None or _jwks_uri != uri:
         log.info("Initializing JWKS client for %s", uri)
         _jwks = _JwksCache(uri)
@@ -70,7 +73,7 @@ async def _fetch_userinfo(access_token: str) -> dict[str, Any] | None:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
-                f"{settings.logto_endpoint.rstrip('/')}/oidc/me",
+                f"{settings.logto_internal_endpoint.rstrip('/')}/oidc/me",
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if resp.status_code == 200:
