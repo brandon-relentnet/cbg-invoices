@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,7 +80,7 @@ async def qbo_callback(
 
     try:
         payload = await qbo_client.exchange_code_for_token(code, realmId)
-    except qbo_client.QboApiError as exc:
+    except qbo_client.QboApiError:
         log.exception("QBO code exchange failed")
         return RedirectResponse(url=f"{target}?qbo_error=exchange_failed", status_code=302)
 
