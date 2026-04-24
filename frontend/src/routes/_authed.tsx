@@ -14,24 +14,30 @@ export const Route = createFileRoute("/_authed")({
 let signInTriggered = false;
 
 function AuthedLayout() {
-  // The official Logto React pattern: trust isLoading + isAuthenticated.
-  // LogtoProvider starts with isLoading=true (see @logto/react provider
-  // source — loadingCount initialises to 1) so the effect below won't
-  // fire until the SDK has definitively resolved the session.
+  // @logto/react wraps every SDK method (getAccessToken, getIdTokenClaims,
+  // signOut, etc.) in a proxy that toggles its internal `isLoading` state
+  // for the duration of the call. Every Logto call you make — even after
+  // successful authentication — briefly flips `isLoading` to true. That's
+  // fine for a spinner button, but means we CANNOT gate the mounting of
+  // the app shell on `isLoading`, or TopBar's useUser() → getIdTokenClaims()
+  // → isLoading flip → shell unmounts → TopBar remounts → getIdTokenClaims()
+  // again → infinite loop.
+  //
+  // Only gate on `isAuthenticated`. The initial session restore holds
+  // `isAuthenticated` false AND `isLoading` true until the check finishes.
   const { isAuthenticated, isLoading, signIn } = useLogto();
 
   useEffect(() => {
+    // Only redirect when Logto has definitively resolved the session
+    // (isLoading=false) AND the user isn't signed in.
     if (isLoading || isAuthenticated) return;
     if (signInTriggered) return;
     signInTriggered = true;
     void signIn(callbackUri());
-    // `signIn` is NOT in deps on purpose — @logto/react returns a fresh
-    // reference each render and including it re-fires the effect in a
-    // loop. The two primitive flags are what actually matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, isLoading]);
 
-  if (isLoading || !isAuthenticated) {
+  if (!isAuthenticated) {
     // Visually identical to the inline splash in index.html so the
     // HTML splash → React splash transition is invisible.
     return (
