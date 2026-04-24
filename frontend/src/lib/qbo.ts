@@ -59,3 +59,40 @@ export function useSyncProjects() {
     },
   });
 }
+
+export interface QboExpenseAccount {
+  id: string;
+  name: string;
+  account_type: string | null;
+  account_sub_type: string | null;
+}
+
+export function useExpenseAccounts(enabled = true) {
+  const { request } = useApi();
+  return useQuery({
+    queryKey: [...qk.qbo.root(), "expense-accounts"],
+    queryFn: () => request<{ accounts: QboExpenseAccount[] }>("/api/qbo/expense-accounts"),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export interface QboSettingsPatch {
+  project_source?: "Customer" | "Class";
+  default_expense_account_id?: string | null;
+}
+
+export function useUpdateQboSettings() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: QboSettingsPatch) =>
+      request<{ status: string }>("/api/qbo/settings", {
+        method: "PATCH",
+        body: patch as unknown as BodyInit,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.qbo.status() });
+    },
+  });
+}

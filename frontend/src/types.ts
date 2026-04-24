@@ -21,10 +21,12 @@ export interface Invoice {
   source: "email" | "upload";
   sender_email: string | null;
   email_subject: string | null;
+  email_body: string | null;
   received_at: string;
   pdf_filename: string;
   pdf_size_bytes: number;
   pdf_page_count: number | null;
+  pdf_url?: string | null;
   status: InvoiceStatus;
   extraction_error: string | null;
   vendor_name: string | null;
@@ -41,9 +43,11 @@ export interface Invoice {
   line_items: LineItem[];
   project_id: string | null;
   reviewed_by: string | null;
+  reviewed_by_email: string | null;
   reviewed_at: string | null;
   qbo_bill_id: string | null;
   qbo_posted_at: string | null;
+  qbo_post_error: string | null;
 }
 
 export interface InvoiceListResponse {
@@ -88,8 +92,11 @@ export interface QboStatus {
   connected: boolean;
   realm_id: string | null;
   expires_at: string | null;
-  last_vendor_sync: string | null;
-  last_project_sync: string | null;
+  refresh_expires_at: string | null;
+  last_vendor_sync_at: string | null;
+  last_project_sync_at: string | null;
+  project_source: "Customer" | "Class";
+  default_expense_account_id: string | null;
 }
 
 export interface CurrentUser {
