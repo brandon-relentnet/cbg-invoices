@@ -20,7 +20,7 @@ import {
 } from "@/lib/invoices";
 import { useQboStatus } from "@/lib/qbo";
 
-export const Route = createFileRoute("/_authed/invoices/$id")({
+export const Route = createFileRoute("/_authed/invoices_/$id")({
   component: InvoiceDetailPage,
 });
 
@@ -169,13 +169,7 @@ function InvoiceDetailPage() {
       {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <div className="lg:col-span-3 h-[calc(100vh-16rem)] min-h-[600px]">
-          {invoice.pdf_url ? (
-            <PdfViewer url={invoice.pdf_url} />
-          ) : (
-            <div className="h-full flex items-center justify-center bg-white text-slate-500 text-sm">
-              PDF URL not available
-            </div>
-          )}
+          <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url} />
         </div>
 
         <div className="lg:col-span-2">

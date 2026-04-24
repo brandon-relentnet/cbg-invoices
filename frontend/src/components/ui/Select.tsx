@@ -6,17 +6,28 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   error?: string;
   hint?: string;
   children: ReactNode;
+  /** See Input — `"accent"` default amber label, `"quiet"` for dense forms. */
+  labelTone?: "accent" | "quiet";
+  size?: "sm" | "md";
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ label, error, hint, className, id, children, ...props }, ref) => {
+  (
+    { label, error, hint, className, id, children, labelTone = "accent", size = "md", ...props },
+    ref,
+  ) => {
     const selectId = id ?? props.name ?? undefined;
     return (
       <div className="w-full">
         {label && (
           <label
             htmlFor={selectId}
-            className="block text-xs font-bold uppercase tracking-widest text-amber mb-1.5"
+            className={cn(
+              "block mb-1",
+              labelTone === "accent"
+                ? "text-xs font-bold uppercase tracking-widest text-amber mb-1.5"
+                : "text-xs font-medium text-slate-600",
+            )}
           >
             {label}
           </label>
@@ -26,7 +37,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           id={selectId}
           aria-invalid={!!error}
           className={cn(
-            "block w-full p-3 border bg-stone/50 text-graphite appearance-none",
+            "block w-full border bg-stone/50 text-graphite appearance-none",
+            size === "sm" ? "p-2 text-sm" : "p-3",
             "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
             "disabled:opacity-60 disabled:cursor-not-allowed",
             error ? "border-red-600" : "border-slate-300",

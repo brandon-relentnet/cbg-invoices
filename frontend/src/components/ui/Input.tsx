@@ -5,17 +5,35 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
   hint?: string;
+  /**
+   * `"accent"` (default) — brand amber uppercase small-caps label. Use for
+   * prominent one-off inputs (settings, rejection reason, etc).
+   *
+   * `"quiet"` — small slate label. Use when the form has many fields and the
+   * amber would create visual noise.
+   */
+  labelTone?: "accent" | "quiet";
+  /**
+   * Size of the input. `"md"` = default p-3. `"sm"` = p-2 text-sm, for
+   * dense tabular forms.
+   */
+  size?: "sm" | "md";
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, hint, className, id, ...props }, ref) => {
+  ({ label, error, hint, className, id, labelTone = "accent", size = "md", ...props }, ref) => {
     const inputId = id ?? props.name ?? undefined;
     return (
       <div className="w-full">
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-xs font-bold uppercase tracking-widest text-amber mb-1.5"
+            className={cn(
+              "block mb-1",
+              labelTone === "accent"
+                ? "text-xs font-bold uppercase tracking-widest text-amber mb-1.5"
+                : "text-xs font-medium text-slate-600",
+            )}
           >
             {label}
           </label>
@@ -26,7 +44,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           aria-invalid={!!error}
           aria-describedby={error ? `${inputId}-err` : hint ? `${inputId}-hint` : undefined}
           className={cn(
-            "block w-full p-3 border bg-stone/50 text-graphite",
+            "block w-full border bg-stone/50 text-graphite",
+            size === "sm" ? "p-2 text-sm" : "p-3",
             "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
             "placeholder:text-slate-400",
             "disabled:opacity-60 disabled:cursor-not-allowed",

@@ -46,6 +46,12 @@ NAMING_CONVENTION = {
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
+    # Fetch server-side defaults (e.g. onupdate=func.now()) via RETURNING in
+    # the same INSERT/UPDATE statement. Without this, async SQLAlchemy tries
+    # to lazy-load the post-update value when it's first read, which raises
+    # MissingGreenlet because the access isn't wrapped in an async context.
+    __mapper_args__ = {"eager_defaults": True}
+
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency — yields an AsyncSession per request."""

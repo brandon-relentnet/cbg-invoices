@@ -17,7 +17,7 @@ import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProjectsRouteImport } from './routes/_authed.projects'
 import { Route as AuthedInvoicesRouteImport } from './routes/_authed.invoices'
 import { Route as AuthedAuditRouteImport } from './routes/_authed.audit'
-import { Route as AuthedInvoicesIdRouteImport } from './routes/_authed.invoices.$id'
+import { Route as AuthedInvoicesIdRouteImport } from './routes/_authed.invoices_.$id'
 
 const CallbackRoute = CallbackRouteImport.update({
   id: '/callback',
@@ -59,16 +59,16 @@ const AuthedAuditRoute = AuthedAuditRouteImport.update({
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedInvoicesIdRoute = AuthedInvoicesIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => AuthedInvoicesRoute,
+  id: '/invoices_/$id',
+  path: '/invoices/$id',
+  getParentRoute: () => AuthedRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/callback': typeof CallbackRoute
   '/audit': typeof AuthedAuditRoute
-  '/invoices': typeof AuthedInvoicesRouteWithChildren
+  '/invoices': typeof AuthedInvoicesRoute
   '/projects': typeof AuthedProjectsRoute
   '/settings': typeof AuthedSettingsRoute
   '/vendors': typeof AuthedVendorsRoute
@@ -78,7 +78,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/callback': typeof CallbackRoute
   '/audit': typeof AuthedAuditRoute
-  '/invoices': typeof AuthedInvoicesRouteWithChildren
+  '/invoices': typeof AuthedInvoicesRoute
   '/projects': typeof AuthedProjectsRoute
   '/settings': typeof AuthedSettingsRoute
   '/vendors': typeof AuthedVendorsRoute
@@ -90,11 +90,11 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/callback': typeof CallbackRoute
   '/_authed/audit': typeof AuthedAuditRoute
-  '/_authed/invoices': typeof AuthedInvoicesRouteWithChildren
+  '/_authed/invoices': typeof AuthedInvoicesRoute
   '/_authed/projects': typeof AuthedProjectsRoute
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/vendors': typeof AuthedVendorsRoute
-  '/_authed/invoices/$id': typeof AuthedInvoicesIdRoute
+  '/_authed/invoices_/$id': typeof AuthedInvoicesIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -127,7 +127,7 @@ export interface FileRouteTypes {
     | '/_authed/projects'
     | '/_authed/settings'
     | '/_authed/vendors'
-    | '/_authed/invoices/$id'
+    | '/_authed/invoices_/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -194,42 +194,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAuditRouteImport
       parentRoute: typeof AuthedRoute
     }
-    '/_authed/invoices/$id': {
-      id: '/_authed/invoices/$id'
-      path: '/$id'
+    '/_authed/invoices_/$id': {
+      id: '/_authed/invoices_/$id'
+      path: '/invoices/$id'
       fullPath: '/invoices/$id'
       preLoaderRoute: typeof AuthedInvoicesIdRouteImport
-      parentRoute: typeof AuthedInvoicesRoute
+      parentRoute: typeof AuthedRoute
     }
   }
 }
 
-interface AuthedInvoicesRouteChildren {
-  AuthedInvoicesIdRoute: typeof AuthedInvoicesIdRoute
-}
-
-const AuthedInvoicesRouteChildren: AuthedInvoicesRouteChildren = {
-  AuthedInvoicesIdRoute: AuthedInvoicesIdRoute,
-}
-
-const AuthedInvoicesRouteWithChildren = AuthedInvoicesRoute._addFileChildren(
-  AuthedInvoicesRouteChildren,
-)
-
 interface AuthedRouteChildren {
   AuthedAuditRoute: typeof AuthedAuditRoute
-  AuthedInvoicesRoute: typeof AuthedInvoicesRouteWithChildren
+  AuthedInvoicesRoute: typeof AuthedInvoicesRoute
   AuthedProjectsRoute: typeof AuthedProjectsRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedVendorsRoute: typeof AuthedVendorsRoute
+  AuthedInvoicesIdRoute: typeof AuthedInvoicesIdRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAuditRoute: AuthedAuditRoute,
-  AuthedInvoicesRoute: AuthedInvoicesRouteWithChildren,
+  AuthedInvoicesRoute: AuthedInvoicesRoute,
   AuthedProjectsRoute: AuthedProjectsRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedVendorsRoute: AuthedVendorsRoute,
+  AuthedInvoicesIdRoute: AuthedInvoicesIdRoute,
 }
 
 const AuthedRouteWithChildren =

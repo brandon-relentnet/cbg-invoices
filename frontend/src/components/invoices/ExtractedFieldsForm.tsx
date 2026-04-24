@@ -4,8 +4,7 @@ import type { Invoice, LineItem, Project, Vendor } from "@/types";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
-import { SectionLabel } from "@/components/layout/AppShell";
-import { formatDollarsInput, parseDollars } from "@/lib/format";
+import { formatCents, formatDollarsInput, parseDollars } from "@/lib/format";
 import type { InvoicePatchPayload } from "@/lib/invoices";
 
 interface Props {
@@ -117,7 +116,10 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
   const addLine = () =>
     setForm((s) => ({
       ...s,
-      line_items: [...s.line_items, { description: "", quantity: "", unit_price: "", amount: "" }],
+      line_items: [
+        ...s.line_items,
+        { description: "", quantity: "", unit_price: "", amount: "" },
+      ],
     }));
 
   const removeLine = (idx: number) =>
@@ -135,176 +137,292 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
     [projects],
   );
 
-  return (
-    <div className="space-y-6">
-      <fieldset disabled={disabled} className="space-y-5">
-        <section>
-          <SectionLabel>Vendor</SectionLabel>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Select
-              label="Vendor (QBO)"
-              value={form.vendor_id}
-              onChange={(e) => update("vendor_id", e.target.value)}
-            >
-              <option value="">— pick a vendor —</option>
-              {vendorOptions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.display_name}
-                </option>
-              ))}
-            </Select>
-            <Input
-              label="Extracted vendor name"
-              value={form.vendor_name}
-              onChange={(e) => update("vendor_name", e.target.value)}
-              hint="Used for reference; not sent to QBO"
-            />
-          </div>
-        </section>
+  const selectedVendor = vendorOptions.find((v) => v.id === form.vendor_id);
+  const extractedDiffers =
+    form.vendor_name.trim().length > 0 &&
+    selectedVendor &&
+    form.vendor_name.trim().toLowerCase() !== selectedVendor.display_name.trim().toLowerCase();
 
-        <section>
-          <SectionLabel>Project</SectionLabel>
+  // Totals computation for summary card (uses cents)
+  const totalCents = parseDollars(form.total);
+  const subtotalCents = parseDollars(form.subtotal);
+  const taxCents = parseDollars(form.tax);
+  const sumLinesCents = form.line_items.reduce(
+    (acc, li) => acc + (parseDollars(li.amount) ?? 0),
+    0,
+  );
+
+  // Sanity check: if subtotal + tax != total, show a warning
+  const mathIsOff =
+    subtotalCents !== null &&
+    taxCents !== null &&
+    totalCents !== null &&
+    Math.abs(subtotalCents + taxCents - totalCents) > 1;
+
+  return (
+    <div className="space-y-4">
+      {/* ---------- Summary card ---------- */}
+      <div className="bg-navy text-stone p-5 border-l-2 border-amber relative overflow-hidden">
+        <div className="absolute inset-0 bg-grid opacity-50 pointer-events-none" />
+        <div className="relative flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-amber mb-1">
+              Vendor
+            </div>
+            <div className="font-display text-xl leading-tight truncate">
+              {selectedVendor?.display_name ||
+                form.vendor_name ||
+                <span className="text-stone/50 italic">Unassigned</span>}
+            </div>
+            {form.invoice_number && (
+              <div className="text-xs text-stone/60 font-mono mt-1">
+                Invoice #{form.invoice_number}
+              </div>
+            )}
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-amber mb-1">
+              Total
+            </div>
+            <div className="font-display text-2xl leading-none tabular-nums">
+              {formatCents(totalCents, form.currency)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <fieldset disabled={disabled} className="space-y-4">
+        {/* ---------- Assignment (Vendor + Project) ---------- */}
+        <FormSection title="Assignment">
           <Select
-            label="Project (QBO customer / class)"
-            value={form.project_id}
-            onChange={(e) => update("project_id", e.target.value)}
+            label="Vendor"
+            labelTone="quiet"
+            value={form.vendor_id}
+            onChange={(e) => update("vendor_id", e.target.value)}
           >
-            <option value="">— no project —</option>
-            {projectOptions.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.display_name}
+            <option value="">— pick a vendor —</option>
+            {vendorOptions.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.display_name}
               </option>
             ))}
           </Select>
-        </section>
+          {extractedDiffers && (
+            <p className="text-xs text-slate-500 mt-1">
+              Extracted as <span className="font-semibold text-graphite">{form.vendor_name}</span>
+            </p>
+          )}
+          <div className="mt-3">
+            <Select
+              label="Project"
+              labelTone="quiet"
+              value={form.project_id}
+              onChange={(e) => update("project_id", e.target.value)}
+            >
+              <option value="">— no project —</option>
+              {projectOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.display_name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </FormSection>
 
-        <section>
-          <SectionLabel>Invoice details</SectionLabel>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* ---------- Invoice metadata ---------- */}
+        <FormSection title="Invoice details">
+          <div className="grid grid-cols-2 gap-3">
             <Input
               label="Invoice #"
+              labelTone="quiet"
               value={form.invoice_number}
               onChange={(e) => update("invoice_number", e.target.value)}
             />
             <Input
               label="PO #"
+              labelTone="quiet"
               value={form.po_number}
               onChange={(e) => update("po_number", e.target.value)}
             />
             <Input
               label="Invoice date"
+              labelTone="quiet"
               type="date"
               value={form.invoice_date}
               onChange={(e) => update("invoice_date", e.target.value)}
             />
             <Input
               label="Due date"
+              labelTone="quiet"
               type="date"
               value={form.due_date}
               onChange={(e) => update("due_date", e.target.value)}
             />
           </div>
-        </section>
+        </FormSection>
 
-        <section>
-          <SectionLabel>Amounts (USD)</SectionLabel>
+        {/* ---------- Amounts ---------- */}
+        <FormSection title="Amounts">
           <div className="grid grid-cols-3 gap-3">
             <Input
               label="Subtotal"
+              labelTone="quiet"
               inputMode="decimal"
               value={form.subtotal}
               onChange={(e) => update("subtotal", e.target.value)}
               placeholder="0.00"
+              className="tabular-nums text-right"
             />
             <Input
               label="Tax"
+              labelTone="quiet"
               inputMode="decimal"
               value={form.tax}
               onChange={(e) => update("tax", e.target.value)}
               placeholder="0.00"
+              className="tabular-nums text-right"
             />
             <Input
               label="Total"
+              labelTone="quiet"
               inputMode="decimal"
               value={form.total}
               onChange={(e) => update("total", e.target.value)}
               placeholder="0.00"
+              className="tabular-nums text-right font-semibold text-navy"
             />
           </div>
-        </section>
+          {mathIsOff && (
+            <p className="mt-2 text-xs text-amber-700 bg-amber/10 border-l-2 border-amber px-2 py-1">
+              Subtotal + tax doesn't match total. Check the extraction or adjust as needed.
+            </p>
+          )}
+        </FormSection>
 
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <SectionLabel>Line items</SectionLabel>
+        {/* ---------- Line items (table) ---------- */}
+        <FormSection
+          title="Line items"
+          action={
             <Button variant="ghost" size="sm" onClick={addLine} type="button">
               <PlusIcon className="h-4 w-4" />
               Add line
             </Button>
-          </div>
-          {form.line_items.length === 0 && (
-            <p className="text-xs text-slate-500 italic">No line items extracted.</p>
-          )}
-          <div className="space-y-2">
-            {form.line_items.map((li, idx) => (
-              <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-                <div className="col-span-6">
-                  <input
-                    value={li.description}
-                    placeholder="Description"
-                    onChange={(e) => updateLine(idx, "description", e.target.value)}
-                    className="block w-full p-2 text-sm border border-slate-300 bg-stone/50 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <input
-                    value={li.quantity}
-                    placeholder="Qty"
-                    inputMode="decimal"
-                    onChange={(e) => updateLine(idx, "quantity", e.target.value)}
-                    className="block w-full p-2 text-sm border border-slate-300 bg-stone/50 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <input
-                    value={li.unit_price}
-                    placeholder="Unit $"
-                    inputMode="decimal"
-                    onChange={(e) => updateLine(idx, "unit_price", e.target.value)}
-                    className="block w-full p-2 text-sm border border-slate-300 bg-stone/50 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
-                  />
-                </div>
-                <div className="col-span-1">
-                  <input
-                    value={li.amount}
-                    placeholder="Amt $"
-                    inputMode="decimal"
-                    onChange={(e) => updateLine(idx, "amount", e.target.value)}
-                    className="block w-full p-2 text-sm border border-slate-300 bg-stone/50 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeLine(idx)}
-                  aria-label="Remove line item"
-                  className="col-span-1 p-2 text-slate-400 hover:text-red-700"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                </button>
+          }
+        >
+          {form.line_items.length === 0 ? (
+            <p className="text-xs text-slate-500 italic py-2">No line items extracted.</p>
+          ) : (
+            <div className="border border-slate-200">
+              {/* Header row */}
+              <div className="grid grid-cols-12 gap-0 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="col-span-6 px-2 py-1.5">Description</div>
+                <div className="col-span-2 px-2 py-1.5 text-right">Qty</div>
+                <div className="col-span-2 px-2 py-1.5 text-right">Unit $</div>
+                <div className="col-span-2 px-2 py-1.5 text-right">Amount</div>
               </div>
-            ))}
-          </div>
-        </section>
+              {/* Data rows */}
+              <div className="divide-y divide-slate-100">
+                {form.line_items.map((li, idx) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-12 gap-0 items-stretch group hover:bg-amber/5"
+                  >
+                    <div className="col-span-6 relative">
+                      <input
+                        value={li.description}
+                        placeholder="Description"
+                        onChange={(e) => updateLine(idx, "description", e.target.value)}
+                        className="block w-full px-2 py-2 text-sm bg-transparent border-0 focus:outline-none focus:bg-amber/10 placeholder:text-slate-400"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <input
+                        value={li.quantity}
+                        placeholder="—"
+                        inputMode="decimal"
+                        onChange={(e) => updateLine(idx, "quantity", e.target.value)}
+                        className="block w-full px-2 py-2 text-sm bg-transparent border-0 focus:outline-none focus:bg-amber/10 text-right tabular-nums placeholder:text-slate-300"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <input
+                        value={li.unit_price}
+                        placeholder="—"
+                        inputMode="decimal"
+                        onChange={(e) => updateLine(idx, "unit_price", e.target.value)}
+                        className="block w-full px-2 py-2 text-sm bg-transparent border-0 focus:outline-none focus:bg-amber/10 text-right tabular-nums placeholder:text-slate-300"
+                      />
+                    </div>
+                    <div className="col-span-2 relative">
+                      <input
+                        value={li.amount}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        onChange={(e) => updateLine(idx, "amount", e.target.value)}
+                        className="block w-full px-2 py-2 text-sm bg-transparent border-0 focus:outline-none focus:bg-amber/10 text-right tabular-nums font-medium placeholder:text-slate-300 pr-7"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeLine(idx)}
+                        aria-label="Remove line item"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-slate-300 hover:text-red-700 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Footer: sum of line items */}
+              {form.line_items.length > 1 && (
+                <div className="grid grid-cols-12 bg-slate-50 border-t border-slate-200 text-xs">
+                  <div className="col-span-10 px-2 py-1.5 text-right font-medium text-slate-500 uppercase tracking-wider text-[10px]">
+                    Lines total
+                  </div>
+                  <div className="col-span-2 px-2 py-1.5 text-right tabular-nums font-semibold text-graphite">
+                    {formatCents(sumLinesCents, form.currency)}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </FormSection>
 
-        <section>
-          <SectionLabel>Notes</SectionLabel>
+        {/* ---------- Notes ---------- */}
+        <FormSection title="Notes">
           <textarea
             value={form.notes}
             onChange={(e) => update("notes", e.target.value)}
             rows={3}
-            className="block w-full p-3 border border-slate-300 bg-stone/50 text-graphite text-sm focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
+            placeholder="Internal notes — shown in QBO as private memo."
+            className="block w-full p-3 border border-slate-300 bg-stone/50 text-graphite text-sm focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber placeholder:text-slate-400"
           />
-        </section>
+        </FormSection>
       </fieldset>
     </div>
+  );
+}
+
+// ---------- Section wrapper ----------
+
+function FormSection({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="bg-white p-4 border-l-2 border-amber/60">
+      <header className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
+        <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
+          {title}
+        </h3>
+        {action}
+      </header>
+      {children}
+    </section>
   );
 }

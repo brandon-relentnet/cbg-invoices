@@ -13,11 +13,9 @@ We verify:
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
 import jwt
 from jwt import PyJWKClient
 
@@ -60,33 +58,15 @@ def _ensure_jwks() -> _JwksCache:
     return _jwks
 
 
-# ------- Lightweight user-info lookup (optional, best-effort) -------
-
-_userinfo_cache: dict[str, tuple[float, dict[str, Any]]] = {}
-
-
-async def _fetch_userinfo(access_token: str) -> dict[str, Any] | None:
-    """Fetch /oidc/me for profile claims not in the JWT. Cached for 5 min."""
-    cached = _userinfo_cache.get(access_token)
-    if cached and cached[0] > time.time():
-        return cached[1]
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                f"{settings.logto_internal_endpoint.rstrip('/')}/oidc/me",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                _userinfo_cache[access_token] = (time.time() + 300, data)
-                return data
-    except Exception as exc:
-        log.warning("userinfo fetch failed: %s", exc)
-    return None
-
-
 async def verify_access_token(token: str) -> VerifiedToken:
-    """Validate a Logto access token. Raises jwt.* on invalid tokens."""
+    """Validate a Logto access token. Raises jwt.* on invalid tokens.
+
+    Note: self-hosted Logto access tokens are JWTs. Profile claims like email
+    and name are *not* included by default — they live in the ID token, which
+    the frontend reads via getIdTokenClaims(). The backend doesn't need them
+    for correctness; sub is the stable user identifier. email/name here are
+    purely informational and will usually be None.
+    """
     jwks = _ensure_jwks()
     signing_key = jwks.get_signing_key(token)
 
@@ -106,20 +86,10 @@ async def verify_access_token(token: str) -> VerifiedToken:
     scopes_val = decoded.get("scope") or decoded.get("scp") or ""
     scopes = scopes_val.split() if isinstance(scopes_val, str) else list(scopes_val)
 
-    email = decoded.get("email")
-    name = decoded.get("name") or decoded.get("username")
-
-    # If profile fields weren't in the token, try /oidc/me once.
-    if not email or not name:
-        info = await _fetch_userinfo(token)
-        if info:
-            email = email or info.get("email")
-            name = name or info.get("name") or info.get("username")
-
     return VerifiedToken(
         sub=sub,
-        email=email,
-        name=name,
+        email=decoded.get("email"),
+        name=decoded.get("name") or decoded.get("username"),
         scopes=scopes,
         raw_claims=decoded,
     )

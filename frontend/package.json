@@ -17,6 +17,7 @@
     "@tanstack/react-router": "^1.81.0",
     "clsx": "^2.1.1",
     "motion": "^11.11.0",
+    "pdfjs-dist": "4.8.69",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-pdf": "^9.1.1",

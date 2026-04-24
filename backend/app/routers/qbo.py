@@ -62,7 +62,6 @@ async def qbo_connect(
 
 @router.get("/callback")
 async def qbo_callback(
-    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     code: str | None = Query(None),
     state: str | None = Query(None),

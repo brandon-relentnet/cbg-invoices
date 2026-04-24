@@ -28,6 +28,7 @@ class InvoiceStatus(str, enum.Enum):
     EXTRACTING = "extracting"
     EXTRACTION_FAILED = "extraction_failed"
     READY_FOR_REVIEW = "ready_for_review"
+    PENDING = "pending"
     APPROVED = "approved"
     POSTED_TO_QBO = "posted_to_qbo"
     REJECTED = "rejected"
@@ -67,8 +68,17 @@ class Invoice(Base):
     pdf_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Status
+    # values_callable forces SQLAlchemy to store the enum *value* (e.g. "received")
+    # instead of the *name* (e.g. "RECEIVED"). This matches the CHECK constraint
+    # in the initial migration and keeps the stored strings human-readable.
     status: Mapped[InvoiceStatus] = mapped_column(
-        SAEnum(InvoiceStatus, name="invoice_status", native_enum=False, length=32),
+        SAEnum(
+            InvoiceStatus,
+            name="invoice_status",
+            native_enum=False,
+            length=32,
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
         nullable=False,
         default=InvoiceStatus.RECEIVED,
         index=True,
@@ -105,3 +115,9 @@ class Invoice(Base):
     qbo_bill_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     qbo_posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     qbo_post_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Assignment (visibility only — anyone can still act on the invoice)
+    assigned_to_id: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)
+    assigned_to_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    assigned_to_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

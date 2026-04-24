@@ -78,6 +78,11 @@ class _InvoiceBase(BaseModel):
     qbo_posted_at: datetime | None = None
     qbo_post_error: str | None = None
 
+    assigned_to_id: str | None = None
+    assigned_to_email: str | None = None
+    assigned_to_name: str | None = None
+    assigned_at: datetime | None = None
+
 
 class InvoiceListItem(_InvoiceBase):
     """Summary fields for the queue list."""
@@ -117,3 +122,15 @@ class InvoicePatch(BaseModel):
 
 class RejectInvoiceRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=1024)
+
+
+class AssignInvoiceRequest(BaseModel):
+    """Assign an invoice to a specific user for visibility.
+
+    Does NOT gate permissions — anyone can still approve/reject. This is
+    primarily for queue organization and personal accountability.
+    """
+
+    user_id: str = Field(min_length=1, max_length=256)
+    user_email: str | None = Field(default=None, max_length=256)
+    user_name: str | None = Field(default=None, max_length=256)

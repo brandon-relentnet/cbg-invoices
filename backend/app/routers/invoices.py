@@ -24,6 +24,7 @@ from app.deps import CurrentUser, get_current_user
 from app.db import get_session
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.invoice import (
+    AssignInvoiceRequest,
     InvoiceDetail,
     InvoiceListItem,
     InvoiceListResponse,
@@ -112,6 +113,37 @@ async def get_invoice_pdf_url(
     return {"url": storage.presign_url(invoice.pdf_storage_key), "ttl_seconds": 900}
 
 
+# ---------- PDF (inline content, same-origin via backend proxy) ----------
+# We proxy PDF bytes through the backend so the react-pdf viewer can fetch
+# them without hitting R2's CORS policy. Open-in-new-tab still uses the
+# direct signed URL since a top-level navigation doesn't trigger CORS.
+
+@router.get("/{invoice_id}/pdf/content")
+async def get_invoice_pdf_content(
+    invoice_id: UUID,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    from fastapi.responses import Response
+
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    try:
+        content = storage.download_pdf(invoice.pdf_storage_key)
+    except storage.StorageError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    safe_name = (invoice.pdf_filename or "invoice.pdf").replace('"', "")
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "Cache-Control": "private, max-age=60",
+        },
+    )
+
+
 # ---------- Upload ----------
 
 @router.post("", response_model=InvoiceDetail, status_code=status.HTTP_201_CREATED)
@@ -141,7 +173,14 @@ async def upload_invoice(
 
     invoice_id = uuid4()
     key = storage.build_storage_key(invoice_id)
-    storage.upload_pdf(key, content, filename=file.filename or "invoice.pdf")
+    try:
+        storage.upload_pdf(key, content, filename=file.filename or "invoice.pdf")
+    except storage.StorageNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except storage.StorageBucketMissingError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except storage.StorageError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     invoice = Invoice(
         id=invoice_id,
@@ -214,30 +253,61 @@ async def patch_invoice(
     return detail
 
 
-# ---------- Approve / Reject / Retry ----------
+# ---------- Lifecycle transitions ----------
+#
+# Status transitions (see AGENTS.md / plan):
+#
+#   ready_for_review ──┬─► approved ──► posted_to_qbo
+#                      ├─► pending (parking lot)
+#                      └─► rejected
+#
+#   pending ──► ready_for_review    (send back)
+#   pending ──► approved            (approve without posting)
+#   pending ──► rejected
+#
+#   approved ──► posted_to_qbo      (manual post)
+#   approved ──► ready_for_review   (unapprove, back to editing)
+#   approved ──► pending            (park it)
+#
+# Assignment is a *visibility* feature — it never gates permission.
+
+
+def _ensure_approvable(invoice: Invoice) -> None:
+    """Raise 4xx if the invoice isn't in a state that can be approved."""
+    if invoice.status == InvoiceStatus.POSTED_TO_QBO:
+        raise HTTPException(status_code=409, detail="Already posted to QBO")
+    if invoice.status == InvoiceStatus.REJECTED:
+        raise HTTPException(status_code=409, detail="Cannot approve a rejected invoice")
+    if not invoice.vendor_name and not invoice.vendor_id:
+        raise HTTPException(status_code=400, detail="Vendor is required before approval")
+    if not invoice.total_cents:
+        raise HTTPException(status_code=400, detail="Total amount is required before approval")
+
+
+def _mark_approved(invoice: Invoice, user: CurrentUser) -> None:
+    invoice.status = InvoiceStatus.APPROVED
+    invoice.reviewed_by = user.id
+    invoice.reviewed_by_email = user.email
+    invoice.reviewed_at = datetime.now(UTC)
+    invoice.qbo_post_error = None
+
 
 @router.post("/{invoice_id}/approve", response_model=InvoiceDetail)
 async def approve_invoice(
     invoice_id: UUID,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    background: BackgroundTasks,
 ):
+    """Confirm the invoice is correct. Does NOT post to QBO — use /post next.
+
+    Allowed from: ready_for_review, pending, extraction_failed (fix-and-approve).
+    """
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.status == InvoiceStatus.POSTED_TO_QBO:
-        raise HTTPException(status_code=409, detail="Already posted to QBO")
-    if not invoice.vendor_name and not invoice.vendor_id:
-        raise HTTPException(status_code=400, detail="Vendor is required before approval")
-    if not invoice.total_cents:
-        raise HTTPException(status_code=400, detail="Total amount is required before approval")
+    _ensure_approvable(invoice)
 
-    invoice.status = InvoiceStatus.APPROVED
-    invoice.reviewed_by = user.id
-    invoice.reviewed_by_email = user.email
-    invoice.reviewed_at = datetime.now(UTC)
-    invoice.qbo_post_error = None
+    _mark_approved(invoice, user)
     await audit.record(
         session,
         actor_id=user.id,
@@ -246,15 +316,195 @@ async def approve_invoice(
         invoice_id=invoice_id,
     )
     await session.commit()
+    return _detail_with_pdf(invoice)
 
-    # QBO posting enqueued in phase 8
-    from app.services import qbo_posting  # local import to avoid cycle at module load
+
+@router.post("/{invoice_id}/post", response_model=InvoiceDetail)
+async def post_invoice_to_qbo(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    background: BackgroundTasks,
+):
+    """Enqueue QBO posting for an already-approved invoice.
+
+    Idempotent — the background task will skip if the invoice is already
+    posted. Also safe to retry after a prior failure.
+    """
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status == InvoiceStatus.POSTED_TO_QBO:
+        raise HTTPException(status_code=409, detail="Already posted to QBO")
+    if invoice.status != InvoiceStatus.APPROVED:
+        raise HTTPException(
+            status_code=409,
+            detail="Only approved invoices can be posted. Approve it first.",
+        )
+
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="invoice_post_requested",
+        invoice_id=invoice_id,
+    )
+    await session.commit()
+
+    from app.services import qbo_posting  # local import avoids circular at module load
 
     background.add_task(qbo_posting.post_bill, invoice_id)
+    return _detail_with_pdf(invoice)
 
-    detail = InvoiceDetail.model_validate(invoice)
-    detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
-    return detail
+
+@router.post("/{invoice_id}/approve-and-post", response_model=InvoiceDetail)
+async def approve_and_post(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    background: BackgroundTasks,
+):
+    """Convenience endpoint: approve + enqueue post in one call."""
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _ensure_approvable(invoice)
+
+    _mark_approved(invoice, user)
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="invoice_approved_and_post_requested",
+        invoice_id=invoice_id,
+    )
+    await session.commit()
+
+    from app.services import qbo_posting
+
+    background.add_task(qbo_posting.post_bill, invoice_id)
+    return _detail_with_pdf(invoice)
+
+
+@router.post("/{invoice_id}/pending", response_model=InvoiceDetail)
+async def send_to_pending(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    body: AssignInvoiceRequest | None = None,
+):
+    """Park an invoice — optionally assigning it to a team member to handle."""
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status == InvoiceStatus.POSTED_TO_QBO:
+        raise HTTPException(status_code=409, detail="Cannot park a posted invoice")
+    if invoice.status == InvoiceStatus.REJECTED:
+        raise HTTPException(status_code=409, detail="Cannot park a rejected invoice")
+
+    invoice.status = InvoiceStatus.PENDING
+    if body:
+        invoice.assigned_to_id = body.user_id
+        invoice.assigned_to_email = body.user_email
+        invoice.assigned_to_name = body.user_name
+        invoice.assigned_at = datetime.now(UTC)
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="invoice_sent_to_pending",
+        invoice_id=invoice_id,
+        message=(body.user_email or body.user_id) if body else None,
+    )
+    await session.commit()
+    return _detail_with_pdf(invoice)
+
+
+@router.post("/{invoice_id}/unapprove", response_model=InvoiceDetail)
+async def unapprove_invoice(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Revert APPROVED or PENDING back to READY_FOR_REVIEW for more edits."""
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status not in {InvoiceStatus.APPROVED, InvoiceStatus.PENDING}:
+        raise HTTPException(
+            status_code=409,
+            detail="Only approved or pending invoices can be unapproved",
+        )
+
+    invoice.status = InvoiceStatus.READY_FOR_REVIEW
+    invoice.reviewed_by = None
+    invoice.reviewed_by_email = None
+    invoice.reviewed_at = None
+    invoice.qbo_post_error = None
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="invoice_unapproved",
+        invoice_id=invoice_id,
+    )
+    await session.commit()
+    return _detail_with_pdf(invoice)
+
+
+@router.post("/{invoice_id}/assign", response_model=InvoiceDetail)
+async def assign_invoice(
+    invoice_id: UUID,
+    body: AssignInvoiceRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    invoice.assigned_to_id = body.user_id
+    invoice.assigned_to_email = body.user_email
+    invoice.assigned_to_name = body.user_name
+    invoice.assigned_at = datetime.now(UTC)
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="invoice_assigned",
+        invoice_id=invoice_id,
+        message=body.user_email or body.user_id,
+    )
+    await session.commit()
+    return _detail_with_pdf(invoice)
+
+
+@router.post("/{invoice_id}/unassign", response_model=InvoiceDetail)
+async def unassign_invoice(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    prev = invoice.assigned_to_email or invoice.assigned_to_id
+    invoice.assigned_to_id = None
+    invoice.assigned_to_email = None
+    invoice.assigned_to_name = None
+    invoice.assigned_at = None
+    if prev:
+        await audit.record(
+            session,
+            actor_id=user.id,
+            actor_email=user.email,
+            action="invoice_unassigned",
+            invoice_id=invoice_id,
+            message=prev,
+        )
+    await session.commit()
+    return _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/reject", response_model=InvoiceDetail)
@@ -285,9 +535,7 @@ async def reject_invoice(
         message=body.reason,
     )
     await session.commit()
-    detail = InvoiceDetail.model_validate(invoice)
-    detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
-    return detail
+    return _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/reextract", response_model=InvoiceDetail)
@@ -314,9 +562,11 @@ async def reextract_invoice(
     )
     await session.commit()
     background.add_task(extraction.extract_invoice, invoice_id)
-    detail = InvoiceDetail.model_validate(invoice)
-    detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
-    return detail
+    return _detail_with_pdf(invoice)
+
+
+# ---------- Legacy retry endpoint (kept for backward compatibility) ----------
+# Equivalent to /post; will be removed once the frontend no longer calls it.
 
 
 @router.post("/{invoice_id}/retry-qbo", response_model=InvoiceDetail)
@@ -326,30 +576,19 @@ async def retry_qbo(
     session: Annotated[AsyncSession, Depends(get_session)],
     background: BackgroundTasks,
 ):
-    invoice = await session.get(Invoice, invoice_id)
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.status != InvoiceStatus.APPROVED:
-        raise HTTPException(status_code=409, detail="Only approved invoices can be retried")
-
-    await audit.record(
-        session,
-        actor_id=user.id,
-        actor_email=user.email,
-        action="invoice_qbo_retry_requested",
-        invoice_id=invoice_id,
-    )
-    await session.commit()
-
-    from app.services import qbo_posting
-
-    background.add_task(qbo_posting.post_bill, invoice_id)
-    detail = InvoiceDetail.model_validate(invoice)
-    detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
-    return detail
+    return await post_invoice_to_qbo(invoice_id, user, session, background)
 
 
 # ---------- Helpers ----------
+
+
+def _detail_with_pdf(invoice: Invoice) -> InvoiceDetail:
+    detail = InvoiceDetail.model_validate(invoice)
+    try:
+        detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("presign_url failed for %s: %s", invoice.id, exc)
+    return detail
 
 
 def _snapshot(invoice: Invoice) -> dict:
