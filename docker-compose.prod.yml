@@ -1,0 +1,30 @@
+# Coolify-oriented overrides.
+#
+# Apply with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Coolify will:
+# - Inject env vars at runtime (APP_BASE_URL, LOGTO_ENDPOINT, etc.)
+# - Route HTTPS via its reverse proxy (no port mappings needed)
+# - Pull from Git on each deploy
+services:
+  postgres:
+    ports: []
+
+  logto:
+    ports: []
+
+  backend:
+    build:
+      target: prod
+    volumes: []
+    ports: []
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      target: prod
+    volumes: []
+    ports: []
+    command: ["nginx", "-g", "daemon off;"]
