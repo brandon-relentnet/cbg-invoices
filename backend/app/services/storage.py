@@ -2,11 +2,18 @@
 
 Stores invoice PDFs with keys like `invoices/2025/04/<uuid>.pdf`.
 Uses boto3's S3 client since R2 is fully S3-compatible.
+
+All public operations are **async** — they hand the underlying boto3 calls
+to `asyncio.to_thread` so they don't freeze the event loop. boto3 has no
+native async API, so this is the cleanest way to integrate it with our
+async FastAPI/SQLAlchemy stack without spawning a separate process.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import boto3
@@ -30,7 +37,12 @@ class StorageBucketMissingError(StorageError):
     """The configured R2 bucket doesn't exist or isn't accessible."""
 
 
-def _client():
+# ──────────────────────────────────────────────────────────────────────────
+# Client construction (sync — cheap, called inside the to_thread wrappers)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _client() -> Any:
     settings = get_settings()
     if not settings.r2_endpoint or not settings.r2_access_key_id:
         raise StorageNotConfiguredError(
@@ -46,6 +58,10 @@ def _client():
         config=Config(
             signature_version="s3v4",
             retries={"max_attempts": 3, "mode": "standard"},
+            # Belt-and-braces network timeouts so a single hung request
+            # can't tie up a worker thread indefinitely.
+            connect_timeout=10,
+            read_timeout=30,
         ),
     )
 
@@ -55,13 +71,16 @@ def build_storage_key(invoice_id: UUID, *, received_at: datetime | None = None) 
     return f"invoices/{when.year:04d}/{when.month:02d}/{invoice_id}.pdf"
 
 
-def upload_pdf(storage_key: str, content: bytes, *, filename: str | None = None) -> None:
-    """Uploads raw PDF bytes to R2. Raises StorageError subclasses on failure."""
+# ──────────────────────────────────────────────────────────────────────────
+# Sync inner helpers — only invoked via asyncio.to_thread below
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _sync_upload(storage_key: str, content: bytes, *, filename: str | None) -> None:
     settings = get_settings()
     client = _client()
     extra: dict[str, str] = {"ContentType": "application/pdf"}
     if filename:
-        # Content-Disposition gives a friendly name when the signed URL is opened directly
         extra["ContentDisposition"] = f'inline; filename="{_sanitize(filename)}"'
     try:
         client.put_object(
@@ -83,7 +102,7 @@ def upload_pdf(storage_key: str, content: bytes, *, filename: str | None = None)
     log.info("Uploaded PDF to R2: %s (%d bytes)", storage_key, len(content))
 
 
-def download_pdf(storage_key: str) -> bytes:
+def _sync_download(storage_key: str) -> bytes:
     settings = get_settings()
     client = _client()
     try:
@@ -102,8 +121,7 @@ def download_pdf(storage_key: str) -> bytes:
         raise StorageError(f"R2 download failed: {exc}") from exc
 
 
-def presign_url(storage_key: str, *, ttl_seconds: int = 900) -> str:
-    """Returns a signed URL valid for ttl_seconds (default 15 min)."""
+def _sync_presign(storage_key: str, ttl_seconds: int) -> str:
     settings = get_settings()
     client = _client()
     return client.generate_presigned_url(
@@ -111,6 +129,27 @@ def presign_url(storage_key: str, *, ttl_seconds: int = 900) -> str:
         Params={"Bucket": settings.r2_bucket, "Key": storage_key},
         ExpiresIn=ttl_seconds,
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Public async API — these are what callers use
+# ──────────────────────────────────────────────────────────────────────────
+
+
+async def upload_pdf(
+    storage_key: str, content: bytes, *, filename: str | None = None
+) -> None:
+    """Uploads raw PDF bytes to R2. Raises StorageError subclasses on failure."""
+    await asyncio.to_thread(_sync_upload, storage_key, content, filename=filename)
+
+
+async def download_pdf(storage_key: str) -> bytes:
+    return await asyncio.to_thread(_sync_download, storage_key)
+
+
+async def presign_url(storage_key: str, *, ttl_seconds: int = 900) -> str:
+    """Returns a signed URL valid for ttl_seconds (default 15 min)."""
+    return await asyncio.to_thread(_sync_presign, storage_key, ttl_seconds)
 
 
 def _sanitize(filename: str) -> str:

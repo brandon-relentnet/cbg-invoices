@@ -91,11 +91,15 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health',timeout=5).status==200 else 1)"]
+      # /api/health does a single SELECT 1, so it should be fast even under
+      # extraction load now that the event loop isn't blocked. We still give
+      # generous timeouts + retry budget so a brief network blip or a startup
+      # alembic migration doesn't trigger a full container restart.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health',timeout=8).status==200 else 1)"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 90s
 
   frontend:
     build:

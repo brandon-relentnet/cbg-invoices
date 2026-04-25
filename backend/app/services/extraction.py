@@ -12,6 +12,7 @@ Pipeline:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -39,11 +40,15 @@ log = logging.getLogger(__name__)
 MAX_PAGES = 4
 TARGET_WIDTH_PX = 2048
 MAX_TOKENS = 4096
+# Cap simultaneous extractions to keep memory pressure predictable. Each
+# render can spike to ~150–250MB during PDF→PNG conversion; running more
+# than two at once on a small Coolify container often triggers OOM.
+_EXTRACTION_SEMAPHORE = asyncio.Semaphore(2)
 
 
 async def extract_invoice(invoice_id: UUID) -> None:
     """Top-level entrypoint run in a BackgroundTask. Opens its own session."""
-    async with AsyncSessionLocal() as session:
+    async with _EXTRACTION_SEMAPHORE, AsyncSessionLocal() as session:
         try:
             await _run(session, invoice_id)
             await session.commit()
@@ -82,8 +87,11 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
         session, action="extraction_started", invoice_id=invoice_id
     )
 
-    pdf_bytes = storage.download_pdf(invoice.pdf_storage_key)
-    page_images = _render_pages(pdf_bytes)
+    pdf_bytes = await storage.download_pdf(invoice.pdf_storage_key)
+    # _render_pages spawns poppler subprocesses + Pillow resize work that
+    # would block the asyncio loop for 5–30s. asyncio.to_thread keeps it
+    # off the event loop so requests served by the same process keep flowing.
+    page_images = await asyncio.to_thread(_render_pages, pdf_bytes)
     if not invoice.pdf_page_count:
         invoice.pdf_page_count = len(page_images)
 
@@ -126,19 +134,36 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
 
 
 def _render_pages(pdf_bytes: bytes) -> list[bytes]:
-    """Render up to MAX_PAGES pages at TARGET_WIDTH_PX wide, returning PNG bytes."""
-    images: list[Image.Image] = convert_from_bytes(pdf_bytes, dpi=150, last_page=MAX_PAGES)
+    """Render up to MAX_PAGES pages at TARGET_WIDTH_PX wide, returning PNG bytes.
+
+    Runs in a worker thread (asyncio.to_thread) — never call directly from an
+    async function. The intermediate PIL images are released aggressively to
+    keep peak memory bounded.
+    """
+    # Render at 110 DPI which is a noticeable memory savings vs 150 DPI for
+    # equivalent extraction quality; we resample down to TARGET_WIDTH_PX
+    # afterwards anyway.
+    images: list[Image.Image] = convert_from_bytes(
+        pdf_bytes, dpi=110, last_page=MAX_PAGES, fmt="ppm"
+    )
     out: list[bytes] = []
     for img in images:
-        if img.width > TARGET_WIDTH_PX:
-            ratio = TARGET_WIDTH_PX / img.width
-            new_size = (TARGET_WIDTH_PX, int(img.height * ratio))
-            img = img.resize(new_size, Image.Resampling.LANCZOS)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG", optimize=True)
-        out.append(buf.getvalue())
+        try:
+            if img.width > TARGET_WIDTH_PX:
+                ratio = TARGET_WIDTH_PX / img.width
+                new_size = (TARGET_WIDTH_PX, int(img.height * ratio))
+                resized = img.resize(new_size, Image.Resampling.LANCZOS)
+                img.close()
+                img = resized
+            if img.mode != "RGB":
+                converted = img.convert("RGB")
+                img.close()
+                img = converted
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", optimize=True)
+            out.append(buf.getvalue())
+        finally:
+            img.close()
     return out
 
 

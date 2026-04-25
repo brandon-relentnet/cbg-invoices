@@ -93,7 +93,7 @@ async def get_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     detail = InvoiceDetail.model_validate(invoice)
     try:
-        detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
+        detail.pdf_url = await storage.presign_url(invoice.pdf_storage_key)
     except Exception as exc:
         log.warning("presign_url failed for %s: %s", invoice.id, exc)
     return detail
@@ -110,7 +110,8 @@ async def get_invoice_pdf_url(
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    return {"url": storage.presign_url(invoice.pdf_storage_key), "ttl_seconds": 900}
+    url = await storage.presign_url(invoice.pdf_storage_key)
+    return {"url": url, "ttl_seconds": 900}
 
 
 # ---------- PDF (inline content, same-origin via backend proxy) ----------
@@ -130,7 +131,7 @@ async def get_invoice_pdf_content(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     try:
-        content = storage.download_pdf(invoice.pdf_storage_key)
+        content = await storage.download_pdf(invoice.pdf_storage_key)
     except storage.StorageError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     safe_name = (invoice.pdf_filename or "invoice.pdf").replace('"', "")
@@ -162,19 +163,14 @@ async def upload_invoice(
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    # Try to read page count (non-fatal if it fails)
-    page_count: int | None = None
-    try:
-        import io
-
-        page_count = len(PdfReader(io.BytesIO(content)).pages)
-    except Exception as exc:
-        log.warning("pdf page count failed: %s", exc)
+    # Best-effort page count. PdfReader parses the xref table which can be
+    # slow on large PDFs, so push it to a worker thread to keep the loop free.
+    page_count = await _safe_page_count(content)
 
     invoice_id = uuid4()
     key = storage.build_storage_key(invoice_id)
     try:
-        storage.upload_pdf(key, content, filename=file.filename or "invoice.pdf")
+        await storage.upload_pdf(key, content, filename=file.filename or "invoice.pdf")
     except storage.StorageNotConfiguredError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except storage.StorageBucketMissingError as exc:
@@ -208,7 +204,7 @@ async def upload_invoice(
     background.add_task(extraction.extract_invoice, invoice_id)
 
     detail = InvoiceDetail.model_validate(invoice)
-    detail.pdf_url = storage.presign_url(key)
+    detail.pdf_url = await storage.presign_url(key)
     return detail
 
 
@@ -249,7 +245,7 @@ async def patch_invoice(
 
     await session.commit()
     detail = InvoiceDetail.model_validate(invoice)
-    detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
+    detail.pdf_url = await storage.presign_url(invoice.pdf_storage_key)
     return detail
 
 
@@ -316,7 +312,7 @@ async def approve_invoice(
         invoice_id=invoice_id,
     )
     await session.commit()
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/post", response_model=InvoiceDetail)
@@ -354,7 +350,7 @@ async def post_invoice_to_qbo(
     from app.services import qbo_posting  # local import avoids circular at module load
 
     background.add_task(qbo_posting.post_bill, invoice_id)
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/approve-and-post", response_model=InvoiceDetail)
@@ -383,7 +379,7 @@ async def approve_and_post(
     from app.services import qbo_posting
 
     background.add_task(qbo_posting.post_bill, invoice_id)
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/pending", response_model=InvoiceDetail)
@@ -417,7 +413,7 @@ async def send_to_pending(
         message=(body.user_email or body.user_id) if body else None,
     )
     await session.commit()
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/unapprove", response_model=InvoiceDetail)
@@ -449,7 +445,7 @@ async def unapprove_invoice(
         invoice_id=invoice_id,
     )
     await session.commit()
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/assign", response_model=InvoiceDetail)
@@ -476,7 +472,7 @@ async def assign_invoice(
         message=body.user_email or body.user_id,
     )
     await session.commit()
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/unassign", response_model=InvoiceDetail)
@@ -504,7 +500,7 @@ async def unassign_invoice(
             message=prev,
         )
     await session.commit()
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/reject", response_model=InvoiceDetail)
@@ -535,7 +531,7 @@ async def reject_invoice(
         message=body.reason,
     )
     await session.commit()
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 @router.post("/{invoice_id}/reextract", response_model=InvoiceDetail)
@@ -562,7 +558,7 @@ async def reextract_invoice(
     )
     await session.commit()
     background.add_task(extraction.extract_invoice, invoice_id)
-    return _detail_with_pdf(invoice)
+    return await _detail_with_pdf(invoice)
 
 
 # ---------- Legacy retry endpoint (kept for backward compatibility) ----------
@@ -582,10 +578,25 @@ async def retry_qbo(
 # ---------- Helpers ----------
 
 
-def _detail_with_pdf(invoice: Invoice) -> InvoiceDetail:
+async def _safe_page_count(content: bytes) -> int | None:
+    """Page count via pypdf, off the event loop. Returns None if it fails."""
+    import asyncio
+    import io
+
+    def _count() -> int | None:
+        try:
+            return len(PdfReader(io.BytesIO(content)).pages)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("pdf page count failed: %s", exc)
+            return None
+
+    return await asyncio.to_thread(_count)
+
+
+async def _detail_with_pdf(invoice: Invoice) -> InvoiceDetail:
     detail = InvoiceDetail.model_validate(invoice)
     try:
-        detail.pdf_url = storage.presign_url(invoice.pdf_storage_key)
+        detail.pdf_url = await storage.presign_url(invoice.pdf_storage_key)
     except Exception as exc:  # noqa: BLE001
         log.warning("presign_url failed for %s: %s", invoice.id, exc)
     return detail

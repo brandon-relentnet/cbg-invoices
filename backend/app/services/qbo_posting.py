@@ -111,7 +111,7 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
 
     # Attach the PDF
     log.info("Uploading PDF attachment for bill %s", invoice.qbo_bill_id)
-    pdf_bytes = storage.download_pdf(invoice.pdf_storage_key)
+    pdf_bytes = await storage.download_pdf(invoice.pdf_storage_key)
     await qbo_client.upload_attachable_for_bill(
         session,
         bill_id=invoice.qbo_bill_id,

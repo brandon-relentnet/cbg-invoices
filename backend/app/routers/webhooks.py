@@ -1,6 +1,7 @@
 """Inbound webhooks — Postmark email and QBO (future)."""
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from datetime import UTC, datetime
@@ -16,6 +17,19 @@ from app.config import get_settings
 from app.db import get_session
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services import audit, extraction, postmark, storage
+
+
+async def _safe_page_count(content: bytes, filename: str) -> int | None:
+    """Best-effort page count off the event loop."""
+
+    def _count() -> int | None:
+        try:
+            return len(PdfReader(io.BytesIO(content)).pages)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("pypdf could not read inbound %s: %s", filename, exc)
+            return None
+
+    return await asyncio.to_thread(_count)
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
@@ -97,16 +111,13 @@ async def postmark_inbound(
         # For multi-PDF emails we add `:idx` to MessageID to keep the dedup column unique
         dedup_id = message_id if len(attachments) == 1 else f"{message_id}:{idx}"
 
-        page_count: int | None = None
-        try:
-            page_count = len(PdfReader(io.BytesIO(content)).pages)
-        except Exception as exc:
-            log.warning("pypdf could not read inbound %s: %s", filename, exc)
+        # Off-loop page count — pypdf parsing can be slow on large PDFs.
+        page_count = await _safe_page_count(content, filename)
 
         invoice_id = uuid4()
         key = storage.build_storage_key(invoice_id, received_at=received_at)
         try:
-            storage.upload_pdf(key, content, filename=filename)
+            await storage.upload_pdf(key, content, filename=filename)
         except Exception as exc:
             log.exception("R2 upload failed for inbound %s", filename)
             # Record as rejected so the PM still sees the email landed
