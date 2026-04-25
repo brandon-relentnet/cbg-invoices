@@ -1,32 +1,30 @@
 /**
  * Public landing page at `/`.
  *
- * Shown to unauthenticated visitors as a brief Cambridge-branded splash with
- * two CTAs: sign in (which jumps into the Logto flow), or request access
- * (mailto: an admin so they can be invited).
- *
- * Authenticated users immediately get bounced to /invoices — no point
- * showing a marketing page to someone already inside.
+ * Single-page Cambridge brand splash with two CTAs: Sign in (kicks the
+ * Logto OAuth flow) and Request access (opens an in-app modal that POSTs
+ * to /api/access-requests — admins see the queue on the Team page).
  */
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useLogto } from "@logto/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRightIcon, EnvelopeIcon } from "@heroicons/react/24/outline";
 import { callbackUri } from "@/lib/auth";
+import { RequestAccessModal } from "@/components/auth/RequestAccessModal";
 
 export const Route = createFileRoute("/")({
   component: Landing,
 });
 
-// Configurable contact email for "Request access". Falls back to a sensible
-// default if VITE_CONTACT_EMAIL isn't set at build time.
-const CONTACT_EMAIL =
-  (import.meta.env.VITE_CONTACT_EMAIL as string | undefined) ??
-  "invoices@cambridgebg.com";
-
 function Landing() {
   const { isAuthenticated, isLoading, signIn } = useLogto();
   const navigate = useNavigate();
+  // Local state so the button only disables when WE actually fired the
+  // sign-in — useLogto().isLoading flips for every Logto SDK call (incl.
+  // background token refreshes), which would grey the button out spuriously.
+  const [signInError, setSignInError] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
 
   // Already signed in? Skip the marketing page entirely.
   useEffect(() => {
@@ -36,16 +34,31 @@ function Landing() {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
-  const handleSignIn = () => {
-    void signIn(callbackUri());
+  const handleSignIn = async () => {
+    setSignInError(null);
+    setSigningIn(true);
+    try {
+      // signIn() does window.location.assign internally — if it returns at
+      // all without redirecting, something went wrong (most often a misconfig
+      // in VITE_LOGTO_APP_ID / VITE_LOGTO_RESOURCE / VITE_LOGTO_ENDPOINT).
+      await signIn(callbackUri());
+    } catch (err) {
+      console.error("signIn failed:", err);
+      setSigningIn(false);
+      setSignInError(
+        err instanceof Error
+          ? err.message
+          : "We couldn't start sign-in. Try again, or ask an admin.",
+      );
+    }
   };
 
-  // Don't flash the landing for a signed-in user during the redirect.
+  // Don't flash the landing for a signed-in user during the redirect
   if (isAuthenticated) return null;
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-stone bg-grid">
-      {/* Brand mark in the corner — tiny, doesn't compete */}
+      {/* Brand mark in the corner */}
       <div className="absolute top-6 left-8 flex items-baseline gap-3">
         <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-amber">
           Cambridge
@@ -55,10 +68,8 @@ function Landing() {
         </span>
       </div>
 
-      {/* Centered hero */}
       <main className="absolute inset-0 flex items-center justify-center px-6">
         <div className="max-w-2xl w-full">
-          {/* Amber accent strip — quintessential Cambridge */}
           <div className="border-l-2 border-amber pl-6 md:pl-8">
             <div className="text-[11px] font-bold uppercase tracking-[0.25em] text-amber mb-3">
               Cambridge Building Group · Internal
@@ -77,39 +88,51 @@ function Landing() {
               <button
                 type="button"
                 onClick={handleSignIn}
-                disabled={isLoading}
-                className="inline-flex items-center justify-center gap-2 bg-amber text-navy font-semibold px-6 py-3 text-sm tracking-wide transition-all hover:bg-amber/90 hover:translate-y-[-1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={signingIn}
+                className="inline-flex items-center justify-center gap-2 bg-amber text-navy font-semibold px-6 py-3 text-sm tracking-wide transition-all hover:bg-amber/90 hover:translate-y-[-1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-wait"
               >
-                Sign in
-                <ArrowRightIcon className="h-4 w-4" aria-hidden />
+                {signingIn ? (
+                  <span
+                    aria-hidden
+                    className="inline-block h-3.5 w-3.5 rounded-full border-2 border-current border-r-transparent animate-spin"
+                  />
+                ) : null}
+                {signingIn ? "Redirecting…" : "Sign in"}
+                {!signingIn && <ArrowRightIcon className="h-4 w-4" aria-hidden />}
               </button>
-              <a
-                href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("Invoice Portal — Request access")}&body=${encodeURIComponent(REQUEST_ACCESS_BODY)}`}
+              <button
+                type="button"
+                onClick={() => setRequestOpen(true)}
                 className="inline-flex items-center justify-center gap-2 bg-transparent text-navy border-2 border-navy font-semibold px-6 py-3 text-sm tracking-wide transition-colors hover:bg-navy hover:text-stone focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy focus-visible:ring-offset-2"
               >
                 <EnvelopeIcon className="h-4 w-4" aria-hidden />
                 Request access
-              </a>
+              </button>
             </div>
+
+            {signInError && (
+              <div
+                role="alert"
+                className="mt-6 max-w-md text-sm text-red-800 bg-red-50 border-l-2 border-red-700 px-3 py-2"
+              >
+                {signInError}
+              </div>
+            )}
           </div>
         </div>
       </main>
 
-      {/* Footer — minimal, single line */}
       <footer className="absolute bottom-6 left-8 right-8 flex items-center justify-between text-[11px] uppercase tracking-widest text-graphite/50">
         <span>© {new Date().getFullYear()} Cambridge Building Group</span>
-        <span className="hidden sm:inline">Accounts Payable · Invoice Portal</span>
+        <span className="hidden sm:inline">
+          Accounts Payable · Invoice Portal
+        </span>
       </footer>
+
+      <RequestAccessModal
+        open={requestOpen}
+        onClose={() => setRequestOpen(false)}
+      />
     </div>
   );
 }
-
-const REQUEST_ACCESS_BODY = `Hi,
-
-I'd like access to the Cambridge Invoice Portal.
-
-Name:
-Role:
-Why I need access:
-
-Thanks!`;

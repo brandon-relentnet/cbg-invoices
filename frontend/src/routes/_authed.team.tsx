@@ -37,6 +37,12 @@ import {
   type AppRole,
   type TeamMember,
 } from "@/lib/users";
+import {
+  useAccessRequests,
+  useApproveAccessRequest,
+  useDismissAccessRequest,
+} from "@/lib/accessRequests";
+import type { AccessRequest } from "@/types";
 
 export const Route = createFileRoute("/_authed/team")({
   component: TeamPage,
@@ -134,6 +140,9 @@ function TeamPage() {
           ) : undefined
         }
       />
+
+      {/* Pending access requests — visible only to admins+ when count > 0 */}
+      {canManage && <AccessRequestsSection />}
 
       {lastInvite && (
         <InviteResultBanner
@@ -409,6 +418,118 @@ function formatEpochMs(ms: number | null): string {
   } catch {
     return "—";
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Access requests section (admin-only; hidden when no pending)
+// ──────────────────────────────────────────────────────────────────────────
+
+function AccessRequestsSection() {
+  const { data, error } = useAccessRequests();
+
+  // 403 means the current user isn't admin enough to see the queue — that's
+  // expected for member accounts (the parent already gates on canManage so
+  // this is just defense in depth).
+  if (error) {
+    const e = error as { status?: number };
+    if (e.status === 403) return null;
+  }
+
+  const pending = data?.requests ?? [];
+  if (!data || pending.length === 0) return null;
+
+  return (
+    <div className="mb-6 bg-white border-t-4 border-amber">
+      <div className="px-5 py-4 border-b border-stone/60 flex items-baseline justify-between">
+        <div>
+          <h3 className="font-display text-lg text-navy leading-none">
+            Pending access {pending.length === 1 ? "request" : "requests"}
+          </h3>
+          <p className="text-xs text-slate-500 mt-1">
+            Submitted from the public landing page. Approve to send an
+            invite link, or dismiss to discard.
+          </p>
+        </div>
+        <span className="inline-block bg-amber text-navy text-xs font-bold uppercase tracking-widest px-2 py-1">
+          {pending.length}
+        </span>
+      </div>
+      <ul className="divide-y divide-stone/60">
+        {pending.map((req) => (
+          <AccessRequestRow key={req.id} request={req} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AccessRequestRow({ request }: { request: AccessRequest }) {
+  const approve = useApproveAccessRequest();
+  const dismiss = useDismissAccessRequest();
+  const busy = approve.isPending || dismiss.isPending;
+  const errorMsg =
+    (approve.error as Error | null)?.message ??
+    (dismiss.error as Error | null)?.message ??
+    null;
+
+  return (
+    <li className="px-5 py-4 flex items-start justify-between gap-4">
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold text-graphite truncate">
+          {request.name ? `${request.name} · ` : ""}
+          <span className="font-mono text-graphite/85">{request.email}</span>
+        </div>
+        {request.message && (
+          <p className="text-sm text-slate-600 mt-1 leading-relaxed whitespace-pre-line">
+            {request.message}
+          </p>
+        )}
+        <div className="text-[10px] uppercase tracking-widest text-slate-400 mt-2">
+          Submitted {formatRelative(request.created_at)}
+        </div>
+        {errorMsg && (
+          <div className="mt-2 text-xs text-red-700">{errorMsg}</div>
+        )}
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => dismiss.mutate(request.id)}
+          disabled={busy}
+          className="text-xs text-slate-500 hover:text-red-700 px-2 py-1 disabled:opacity-50"
+        >
+          Dismiss
+        </button>
+        <button
+          type="button"
+          onClick={() => approve.mutate(request.id)}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 bg-amber text-navy text-xs font-semibold px-3 py-1.5 hover:bg-amber/90 disabled:opacity-50 disabled:cursor-wait"
+        >
+          {approve.isPending && (
+            <span
+              aria-hidden
+              className="inline-block h-3 w-3 rounded-full border-2 border-current border-r-transparent animate-spin"
+            />
+          )}
+          Approve & invite
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  const diff = Date.now() - then;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 // ──────────────────────────────────────────────────────────────────────────

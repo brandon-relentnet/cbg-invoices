@@ -33,4 +33,9 @@ export const qk = {
     root: () => [...qk.all, "audit"] as const,
     list: (params: Record<string, unknown>) => [...qk.audit.root(), "list", params] as const,
   },
+
+  accessRequests: {
+    root: () => [...qk.all, "access-requests"] as const,
+    list: () => [...qk.accessRequests.root(), "list"] as const,
+  },
 } as const;

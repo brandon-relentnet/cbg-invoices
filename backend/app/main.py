@@ -13,6 +13,7 @@ from starlette.responses import Response
 
 from app.config import get_settings
 from app.routers import (
+    access_requests,
     audit,
     auth,
     health,
@@ -104,3 +105,4 @@ app.include_router(qbo.router, prefix=f"{API_PREFIX}/qbo")
 app.include_router(webhooks.router, prefix=f"{API_PREFIX}/webhooks")
 app.include_router(audit.router, prefix=f"{API_PREFIX}/audit")
 app.include_router(users.router, prefix=f"{API_PREFIX}/users")
+app.include_router(access_requests.router, prefix=f"{API_PREFIX}/access-requests")

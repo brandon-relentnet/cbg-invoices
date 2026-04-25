@@ -13,6 +13,7 @@ import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/cn";
 import { postSignOutUri, useUser } from "@/lib/auth";
 import { useMe } from "@/lib/users";
+import { useAccessRequests } from "@/lib/accessRequests";
 
 interface NavItem {
   to: string;
@@ -31,6 +32,11 @@ const NAV: NavItem[] = [
 
 export function Sidebar() {
   const { pathname } = useLocation();
+  const me = useMe();
+  const canManage = me.data?.role === "owner" || me.data?.role === "admin";
+  // Only admins+ get the access-requests query (others would 403)
+  const reqQuery = useAccessRequests({ enabled: canManage });
+  const pendingCount = reqQuery.data?.pending_count ?? 0;
 
   return (
     <aside className="relative w-60 flex-shrink-0 bg-graphite bg-grid bg-noise text-stone overflow-hidden">
@@ -50,6 +56,7 @@ export function Sidebar() {
           <ul className="space-y-0.5">
             {NAV.map(({ to, label, Icon }) => {
               const active = pathname === to || pathname.startsWith(`${to}/`);
+              const showBadge = to === "/team" && pendingCount > 0;
               return (
                 <li key={to}>
                   <Link
@@ -63,7 +70,15 @@ export function Sidebar() {
                     )}
                   >
                     <Icon className="h-5 w-5 flex-shrink-0" />
-                    <span>{label}</span>
+                    <span className="flex-1">{label}</span>
+                    {showBadge && (
+                      <span
+                        className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 bg-amber text-navy text-[10px] font-bold tracking-wider"
+                        aria-label={`${pendingCount} pending request${pendingCount === 1 ? "" : "s"}`}
+                      >
+                        {pendingCount}
+                      </span>
+                    )}
                   </Link>
                 </li>
               );

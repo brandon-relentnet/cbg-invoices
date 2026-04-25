@@ -110,3 +110,23 @@ export interface CurrentUser {
   email: string | null;
   name: string | null;
 }
+
+export type AccessRequestStatus = "pending" | "approved" | "dismissed";
+
+export interface AccessRequest {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  email: string;
+  name: string | null;
+  message: string | null;
+  status: AccessRequestStatus;
+  handled_by_id: string | null;
+  handled_by_email: string | null;
+  handled_at: string | null;
+}
+
+export interface AccessRequestListResponse {
+  requests: AccessRequest[];
+  pending_count: number;
+}

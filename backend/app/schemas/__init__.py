@@ -1,4 +1,9 @@
 """Pydantic DTOs used across the API layer."""
+from app.schemas.access_request import (
+    AccessRequestCreate,
+    AccessRequestListResponse,
+    AccessRequestOut,
+)
 from app.schemas.audit import AuditLogOut
 from app.schemas.invoice import (
     ExtractedFields,
@@ -14,6 +19,9 @@ from app.schemas.qbo import QboStatus
 from app.schemas.vendor import VendorOut
 
 __all__ = [
+    "AccessRequestCreate",
+    "AccessRequestListResponse",
+    "AccessRequestOut",
     "AuditLogOut",
     "ExtractedFields",
     "InvoiceDetail",
