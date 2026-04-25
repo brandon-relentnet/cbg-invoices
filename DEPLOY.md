@@ -22,14 +22,18 @@ defined by `docker-compose.yml` + `docker-compose.prod.yml`.
 
 1. Coolify → **+ New Resource → Docker Compose**.
 2. Point it at this Git repository, branch `main`.
-3. For the Compose file, specify both files:
+3. For the Compose file path, use:
    ```
-   docker-compose.yml
-   docker-compose.prod.yml
+   docker-compose.coolify.yml
    ```
-   Coolify merges them — the `prod.yml` file removes port mappings and adds
-   `restart: unless-stopped`.
+   This is a self-contained production compose file — no port mappings, builds
+   the prod targets, includes a backend healthcheck, and pulls everything from
+   Coolify env vars.
 4. Save.
+
+> **Why not `docker-compose.yml`?** That file is for local dev — it mounts source
+> as volumes, exposes ports on the host, runs Vite dev server, etc. The Coolify
+> compose file is production-only.
 
 ## Step 2 — Configure environment variables in Coolify
 
