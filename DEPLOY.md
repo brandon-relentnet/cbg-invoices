@@ -66,6 +66,7 @@ VITE_LOGTO_ENDPOINT=https://auth.cambridgebg.com
 VITE_LOGTO_APP_ID=          # filled after Step 4
 VITE_LOGTO_RESOURCE=https://invoices-api.cambridgebg.com
 VITE_API_BASE_URL=https://invoices-api.cambridgebg.com
+VITE_CONTACT_EMAIL=invoices@cambridgebg.com   # mailto target on the landing page's "Request access" button
 
 # ---- Anthropic ----
 ANTHROPIC_API_KEY=<your key>
@@ -146,10 +147,18 @@ browsable.
    python scripts/apply_logto_css.py
    ```
    Re-run any time you tweak `backend/scripts/logto-theme/cambridge.css`.
-6. In Logto admin → Users → Add user. Create the first Project Manager account.
-   They'll be auto-promoted to `owner` role on next backend startup.
-   Subsequent users get invited via the portal's Team page (no need to use
-   Logto's admin console).
+6. In Logto admin → Users → Add user. Create the first Project Manager
+   account.
+
+   On next backend startup, the longest-tenured user without an `owner`
+   role gets auto-promoted. If for any reason that didn't happen
+   (M2M creds weren't configured yet at boot, race condition, etc.),
+   manually promote them from the backend container terminal:
+   ```bash
+   python scripts/promote_owner.py user@example.com
+   ```
+   Idempotent. Subsequent users get invited via the portal's Team page
+   (no need to use Logto's admin console).
 
 ## Step 5 — Configure QuickBooks Online
 

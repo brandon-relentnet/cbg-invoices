@@ -108,6 +108,7 @@ services:
         VITE_LOGTO_ENDPOINT: ${VITE_LOGTO_ENDPOINT}
         VITE_LOGTO_APP_ID: ${VITE_LOGTO_APP_ID}
         VITE_LOGTO_RESOURCE: ${VITE_LOGTO_RESOURCE}
+        VITE_CONTACT_EMAIL: ${VITE_CONTACT_EMAIL}
     restart: unless-stopped
     depends_on:
       - backend
