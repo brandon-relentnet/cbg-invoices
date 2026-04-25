@@ -16,6 +16,7 @@ defined by `docker-compose.yml` + `docker-compose.prod.yml`.
 - Anthropic API key.
 - QuickBooks Online developer app (production keys when ready; sandbox until then).
 - Postmark Inbound webhook server set up.
+- Resend API key + a verified sender domain for invite emails.
 
 ## Step 1 — Create the Coolify application
 
@@ -50,12 +51,16 @@ DATABASE_URL=postgresql+asyncpg://invoice:<same-password>@postgres:5432/invoice_
 # ---- Logto ----
 LOGTO_ENDPOINT=https://auth.cambridgebg.com
 LOGTO_ADMIN_ENDPOINT=https://auth-admin.cambridgebg.com
+# In production LOGTO_INTERNAL_URL is the same as LOGTO_ENDPOINT — the
+# split only matters in Docker dev where backend can't reach Logto via
+# `localhost`.
+LOGTO_INTERNAL_URL=https://auth.cambridgebg.com
 LOGTO_M2M_APP_ID=           # filled after Step 4
 LOGTO_M2M_APP_SECRET=       # filled after Step 4
 LOGTO_APP_ID=               # filled after Step 4
 LOGTO_RESOURCE=https://invoices-api.cambridgebg.com
 
-# Frontend build-time env
+# Frontend build-time env (baked into the JS bundle by Vite)
 VITE_LOGTO_ENDPOINT=https://auth.cambridgebg.com
 VITE_LOGTO_APP_ID=          # filled after Step 4
 VITE_LOGTO_RESOURCE=https://invoices-api.cambridgebg.com
@@ -81,10 +86,20 @@ QBO_CLIENT_SECRET=<dev app client secret>
 QBO_ENVIRONMENT=sandbox
 QBO_REDIRECT_URI=https://invoices-api.cambridgebg.com/api/qbo/callback
 QBO_DEFAULT_EXPENSE_ACCOUNT_ID=
+
+# ---- Resend (outbound team-invite emails) ----
+RESEND_API_KEY=<your key>
+RESEND_FROM=Cambridge Invoice Portal <invites@cambridgebg.com>
 ```
 
 > **IMPORTANT:** `VITE_*` variables are compiled into the frontend bundle at
-> build time. Any change requires a rebuild, not just a restart.
+> build time. Any change requires a full rebuild (Coolify → "Force Rebuild"),
+> not just a restart. The `docker-compose.prod.yml` file passes them through
+> as Docker build args so they're available during `pnpm build`.
+
+> **Resend domain note:** `RESEND_FROM` must use a sender domain you've
+> verified in Resend's dashboard (DKIM + SPF). Without verification, invites
+> will only deliver to the email address that owns your Resend account.
 
 ## Step 3 — Route the subdomains
 
@@ -120,11 +135,20 @@ browsable.
    ```bash
    python scripts/logto_setup.py
    ```
+   This creates the SPA app, the API resource, AND configures the sign-in
+   experience for email-first sign-up (required for magic-link invites).
    Copy the printed `LOGTO_APP_ID` and `LOGTO_RESOURCE` values into Coolify env
    (plus their `VITE_*` mirrors). **Redeploy** so the frontend is rebuilt with
    the new `VITE_LOGTO_APP_ID`.
-5. In Logto admin → Users → Add user. Create a Project Manager account. They
-   will use this to log in.
+5. Apply Cambridge brand styling to the Logto sign-in screen:
+   ```bash
+   python scripts/apply_logto_css.py
+   ```
+   Re-run any time you tweak `backend/scripts/logto-theme/cambridge.css`.
+6. In Logto admin → Users → Add user. Create the first Project Manager account.
+   They'll be auto-promoted to `owner` role on next backend startup.
+   Subsequent users get invited via the portal's Team page (no need to use
+   Logto's admin console).
 
 ## Step 5 — Configure QuickBooks Online
 

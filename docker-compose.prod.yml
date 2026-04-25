@@ -25,6 +25,14 @@ services:
   frontend:
     build:
       target: prod
+      # VITE_* values must be available at BUILD time — Vite bakes them
+      # into the static JS bundle. Coolify reads these from your env vars
+      # and passes them through here.
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_LOGTO_ENDPOINT: ${VITE_LOGTO_ENDPOINT}
+        VITE_LOGTO_APP_ID: ${VITE_LOGTO_APP_ID}
+        VITE_LOGTO_RESOURCE: ${VITE_LOGTO_RESOURCE}
     volumes: []
     ports: []
     command: ["nginx", "-g", "daemon off;"]
