@@ -1,0 +1,50 @@
+# Local-development overrides on top of docker-compose.yml.
+#
+# Apply with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# (The Makefile does this for you — `make up`, `make down`, etc.)
+#
+# Adds: dev build targets (Vite dev server, uvicorn --reload), source-mount
+# volumes for hot reload, host port mappings for direct access, env_file
+# loading from local .env, and friendly container names.
+services:
+  postgres:
+    container_name: cbg_postgres
+    ports:
+      - "5432:5432"
+
+  logto:
+    container_name: cbg_logto
+    ports:
+      - "3001:3001"
+      - "3002:3002"
+
+  backend:
+    container_name: cbg_backend
+    build:
+      target: dev
+    env_file:
+      - .env
+    # Hot reload for backend code edits
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  frontend:
+    container_name: cbg_frontend
+    build:
+      target: dev
+    env_file:
+      - .env
+    # Hot reload for frontend edits + persisted node_modules
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    command: pnpm dev --host 0.0.0.0

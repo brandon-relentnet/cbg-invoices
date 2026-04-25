@@ -1,7 +1,16 @@
+# Production-default compose file.
+#
+# - PROD: Coolify (or any Docker host) uses this file directly. Env vars
+#   come from Coolify's Environment Variables UI; the reverse proxy handles
+#   HTTPS + routing, so no host port mappings are exposed here.
+#
+# - DEV: layer docker-compose.dev.yml on top to add port mappings, source
+#   bind mounts for hot reload, dev build targets, and env_file loading
+#   from local .env. The Makefile does this automatically — `make up`,
+#   `make down`, etc. behave like before.
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: cbg_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -10,8 +19,6 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
-    ports:
-      - "5432:5432"
     networks:
       - invoice_portal_net
     healthcheck:
@@ -22,7 +29,6 @@ services:
 
   logto:
     image: svhd/logto:latest
-    container_name: cbg_logto
     restart: unless-stopped
     depends_on:
       postgres:
@@ -33,14 +39,10 @@ services:
       DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/logto
       ENDPOINT: ${LOGTO_ENDPOINT}
       ADMIN_ENDPOINT: ${LOGTO_ADMIN_ENDPOINT}
-    ports:
-      - "3001:3001"
-      - "3002:3002"
     networks:
       - invoice_portal_net
-    # On first boot, seed the `logto` database schema; on subsequent boots,
-    # --swe ("skip when existing") makes seed a no-op and alteration deploy
-    # applies any pending migrations. Both are idempotent.
+    # First boot seeds the schema; subsequent boots are no-ops thanks to --swe.
+    # `alteration deploy latest` applies any pending Logto migrations.
     entrypoint:
       - sh
       - -c
@@ -50,45 +52,67 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: dev
-    container_name: cbg_backend
+      target: prod
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       logto:
         condition: service_started
-    env_file:
-      - .env
-    volumes:
-      - ./backend:/app
-    ports:
-      - "8000:8000"
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_BASE_URL: ${APP_BASE_URL}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL}
+      DATABASE_URL: ${DATABASE_URL}
+      LOGTO_ENDPOINT: ${LOGTO_ENDPOINT}
+      LOGTO_INTERNAL_URL: ${LOGTO_INTERNAL_URL}
+      LOGTO_M2M_APP_ID: ${LOGTO_M2M_APP_ID}
+      LOGTO_M2M_APP_SECRET: ${LOGTO_M2M_APP_SECRET}
+      LOGTO_APP_ID: ${LOGTO_APP_ID}
+      LOGTO_RESOURCE: ${LOGTO_RESOURCE}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      EXTRACTION_MODEL: ${EXTRACTION_MODEL}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_BUCKET: ${R2_BUCKET}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      POSTMARK_WEBHOOK_SECRET: ${POSTMARK_WEBHOOK_SECRET}
+      QBO_CLIENT_ID: ${QBO_CLIENT_ID}
+      QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
+      QBO_ENVIRONMENT: ${QBO_ENVIRONMENT}
+      QBO_REDIRECT_URI: ${QBO_REDIRECT_URI}
+      QBO_DEFAULT_EXPENSE_ACCOUNT_ID: ${QBO_DEFAULT_EXPENSE_ACCOUNT_ID}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      RESEND_FROM: ${RESEND_FROM}
     networks:
       - invoice_portal_net
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health',timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: dev
-    container_name: cbg_frontend
+      target: prod
+      # VITE_* values are baked into the static JS bundle at build time.
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_LOGTO_ENDPOINT: ${VITE_LOGTO_ENDPOINT}
+        VITE_LOGTO_APP_ID: ${VITE_LOGTO_APP_ID}
+        VITE_LOGTO_RESOURCE: ${VITE_LOGTO_RESOURCE}
     restart: unless-stopped
     depends_on:
       - backend
-    env_file:
-      - .env
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    ports:
-      - "5173:5173"
     networks:
       - invoice_portal_net
-    command: pnpm dev --host 0.0.0.0
 
 volumes:
   pgdata:

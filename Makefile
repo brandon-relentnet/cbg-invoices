@@ -1,59 +1,64 @@
-.PHONY: up down restart logs migrate logto-setup logto-css shell test build fe-shell
+# Local-development targets. Compose two files: the production-default
+# docker-compose.yml plus the dev override (port mappings, source mounts,
+# dev build targets, env_file from .env).
+COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
+
+.PHONY: up down restart logs migrate logto-setup logto-css shell test build fe-shell ps rebuild migration logs-backend logs-frontend logs-logto
 
 up:
-	docker compose up -d
+	$(COMPOSE) up -d
 
 down:
-	docker compose down
+	$(COMPOSE) down
 
 restart:
 	# Force-recreate picks up .env changes (plain restart doesn't re-read env_file)
-	docker compose up -d --force-recreate --no-deps backend frontend
+	$(COMPOSE) up -d --force-recreate --no-deps backend frontend
 
 logs:
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 logs-backend:
-	docker compose logs -f backend
+	$(COMPOSE) logs -f backend
 
 logs-frontend:
-	docker compose logs -f frontend
+	$(COMPOSE) logs -f frontend
 
 logs-logto:
-	docker compose logs -f logto
+	$(COMPOSE) logs -f logto
 
 migrate:
-	docker compose exec backend alembic upgrade head
+	$(COMPOSE) exec backend alembic upgrade head
 
 migration:
-	docker compose exec backend alembic revision --autogenerate -m "$(msg)"
+	$(COMPOSE) exec backend alembic revision --autogenerate -m "$(msg)"
 
 logto-setup:
 	# Recreate the backend so it picks up the latest .env values
 	# (docker compose restart does NOT re-read env_file)
-	docker compose up -d --force-recreate --no-deps backend
+	$(COMPOSE) up -d --force-recreate --no-deps backend
 	@sleep 2
-	docker compose exec backend python scripts/logto_setup.py
+	$(COMPOSE) exec backend python scripts/logto_setup.py
 
 logto-css:
 	# Apply Cambridge branding to Logto's hosted sign-in UI via the
 	# Management API's Custom CSS feature.
-	docker compose exec backend python scripts/apply_logto_css.py
+	$(COMPOSE) exec backend python scripts/apply_logto_css.py
 
 shell:
-	docker compose exec backend /bin/bash
+	$(COMPOSE) exec backend /bin/bash
 
 fe-shell:
-	docker compose exec frontend /bin/sh
+	$(COMPOSE) exec frontend /bin/sh
 
 test:
-	docker compose exec backend pytest
+	$(COMPOSE) exec backend pytest
 
 build:
-	docker compose build
+	$(COMPOSE) build
 
 rebuild:
-	docker compose build --no-cache
+	$(COMPOSE) build --no-cache
 
 ps:
-	docker compose ps
+	$(COMPOSE) ps
