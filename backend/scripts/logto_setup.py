@@ -56,7 +56,13 @@ def warn(msg: str) -> None:
 
 
 async def get_mgmt_token(client: httpx.AsyncClient, endpoint: str, app_id: str, secret: str) -> str:
-    """Exchange M2M credentials for a Management API access token."""
+    """Exchange M2M credentials for a Management API access token.
+
+    A successful token response doesn't guarantee the token has any scopes —
+    if the M2M app hasn't been assigned the "Logto Management API access" role
+    in the admin console, the token will be issued but every API call will
+    return 401. We decode the JWT and bail loudly if the scope claim is empty.
+    """
     resp = await client.post(
         f"{endpoint}/oidc/token",
         data={
@@ -70,7 +76,34 @@ async def get_mgmt_token(client: httpx.AsyncClient, endpoint: str, app_id: str, 
     if resp.status_code != 200:
         print(f"Failed to get Management API token: {resp.status_code} {resp.text}", file=sys.stderr)
         sys.exit(1)
-    return resp.json()["access_token"]
+    token = resp.json()["access_token"]
+
+    # Sanity check: decode JWT and verify it has any scopes at all.
+    try:
+        import base64
+        import json as _json
+        payload_b64 = token.split(".")[1]
+        # JWT base64url with no padding — pad it
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(payload_b64))
+        scope = claims.get("scope", "").strip()
+        if not scope:
+            print(
+                "\n✖ The Management API token came back with no scopes.\n"
+                "  This means the Bootstrap M2M app doesn't have the \n"
+                "  'Logto Management API access' role assigned.\n\n"
+                "  Fix: in the Logto admin console, open the Bootstrap app,\n"
+                "  scroll to Permissions → Roles, click 'Assign roles', and\n"
+                "  add 'Logto Management API access'. Then re-run this script.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    except (IndexError, ValueError, KeyError):
+        # If we can't decode the token, let the script proceed and surface
+        # whatever real error the API returns.
+        pass
+
+    return token
 
 
 async def find_application(
