@@ -105,7 +105,7 @@ function SettingsPage() {
               <>
                 {connected ? (
                   <div className="space-y-3">
-                    <dl className="grid grid-cols-2 gap-3 text-sm">
+                    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                       <Field label="Realm ID" value={qbo.realm_id ?? "—"} mono />
                       <Field
                         label="Access token expires"

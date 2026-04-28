@@ -60,7 +60,24 @@ function ProjectsPage() {
       )}
       {projects.length > 0 && (
         <div className="bg-white border-t-4 border-amber">
-          <table className="w-full">
+          {/* Mobile: stacked rows */}
+          <ul className="md:hidden divide-y divide-stone/60">
+            {projects.map((p) => (
+              <li key={p.id} className="px-4 py-3">
+                <div className="font-semibold text-navy truncate">
+                  {p.display_name}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                  <span>{p.qbo_type}</span>
+                  <span className="font-mono">QBO #{p.qbo_id}</span>
+                  <span>Synced {formatRelative(p.last_synced_at)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* Desktop: full table */}
+          <table className="hidden md:table w-full">
             <thead className="bg-stone/50">
               <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
                 <th className="px-4 py-3 text-left">Project</th>

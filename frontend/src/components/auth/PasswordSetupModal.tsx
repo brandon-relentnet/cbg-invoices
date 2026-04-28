@@ -64,7 +64,7 @@ export function PasswordSetupModal({ open }: { open: boolean }) {
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 20, opacity: 0 }}
-            className="bg-white w-full max-w-md border-t-4 border-amber"
+            className="bg-white w-full max-w-md border-t-4 border-amber max-h-[90vh] overflow-y-auto"
           >
             <header className="p-6 pb-4 border-b border-stone/60">
               <div className="flex items-center gap-3">

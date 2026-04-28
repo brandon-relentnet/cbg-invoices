@@ -182,33 +182,35 @@ function TeamPage() {
           </div>
         )}
         {!isLoading && !error && (data?.users.length ?? 0) > 0 && (
-          <table className="w-full">
-            <thead className="bg-stone/50">
-              <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
-                <th className="px-4 py-3 text-left">Member</th>
-                <th className="px-4 py-3 text-left">Email</th>
-                <th className="px-4 py-3 text-left">Role</th>
-                <th className="px-4 py-3 text-left">Last sign-in</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {data?.users.map((m) => (
-                <MemberRow
-                  key={m.id}
-                  member={m}
-                  me={me}
-                  canManage={canManage}
-                  isOwner={isOwner}
-                  onRemove={() => setMemberToRemove(m)}
-                  onResend={() => handleResend(m)}
-                  onChangeRole={(role) => handleRoleChange(m, role)}
-                  resending={resendingId === m.id}
-                  roleChangePending={changeRole.isPending}
-                />
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px]">
+              <thead className="bg-stone/50">
+                <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
+                  <th className="px-4 py-3 text-left">Member</th>
+                  <th className="px-4 py-3 text-left">Email</th>
+                  <th className="px-4 py-3 text-left">Role</th>
+                  <th className="px-4 py-3 text-left">Last sign-in</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {data?.users.map((m) => (
+                  <MemberRow
+                    key={m.id}
+                    member={m}
+                    me={me}
+                    canManage={canManage}
+                    isOwner={isOwner}
+                    onRemove={() => setMemberToRemove(m)}
+                    onResend={() => handleResend(m)}
+                    onChangeRole={(role) => handleRoleChange(m, role)}
+                    resending={resendingId === m.id}
+                    roleChangePending={changeRole.isPending}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -473,11 +475,13 @@ function AccessRequestRow({ request }: { request: AccessRequest }) {
     null;
 
   return (
-    <li className="px-5 py-4 flex items-start justify-between gap-4">
+    <li className="px-4 sm:px-5 py-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-graphite truncate">
+        <div className="text-sm font-semibold text-graphite break-words">
           {request.name ? `${request.name} · ` : ""}
-          <span className="font-mono text-graphite/85">{request.email}</span>
+          <span className="font-mono text-graphite/85 break-all">
+            {request.email}
+          </span>
         </div>
         {request.message && (
           <p className="text-sm text-slate-600 mt-1 leading-relaxed whitespace-pre-line">
@@ -491,7 +495,7 @@ function AccessRequestRow({ request }: { request: AccessRequest }) {
           <div className="mt-2 text-xs text-red-700">{errorMsg}</div>
         )}
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-2 flex-shrink-0 sm:justify-end">
         <button
           type="button"
           onClick={() => dismiss.mutate(request.id)}
@@ -579,7 +583,7 @@ function InviteModal({
             initial={{ y: 16, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 16, opacity: 0 }}
-            className="bg-white w-full max-w-md border-t-4 border-amber"
+            className="bg-white w-full max-w-md border-t-4 border-amber max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <header className="p-5 flex items-start justify-between border-b border-stone/60">
@@ -733,7 +737,7 @@ function RemoveModal({
             initial={{ y: 16, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 16, opacity: 0 }}
-            className="bg-white w-full max-w-md border-t-4 border-red-700"
+            className="bg-white w-full max-w-md border-t-4 border-red-700 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-5">

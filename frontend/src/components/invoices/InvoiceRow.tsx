@@ -180,3 +180,98 @@ function linkLabelFor(status: Invoice["status"]): string {
       return "Open";
   }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Mobile card variant — same data, stacked layout
+// ──────────────────────────────────────────────────────────────────────────
+
+export function InvoiceCard({ invoice }: { invoice: Invoice }) {
+  return (
+    <li className="px-4 py-4 hover:bg-amber/5 transition-colors">
+      <Link
+        to="/invoices/$id"
+        params={{ id: invoice.id }}
+        className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+      >
+        {/* Top row: vendor + amount */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-navy truncate">
+              {invoice.vendor_name ?? (
+                <span className="text-slate-400 italic">Unknown vendor</span>
+              )}
+            </div>
+            {invoice.invoice_number && (
+              <div className="font-mono text-xs text-graphite mt-0.5">
+                #{invoice.invoice_number}
+              </div>
+            )}
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="font-semibold text-navy tabular-nums">
+              {formatCents(invoice.total_cents, invoice.currency)}
+            </div>
+          </div>
+        </div>
+
+        {/* Middle row: source/time + assignee */}
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
+          <div className="flex items-center gap-1.5">
+            {invoice.source === "email" ? (
+              <EnvelopeIcon className="h-3.5 w-3.5" aria-label="Email" />
+            ) : (
+              <ArrowUpTrayIcon className="h-3.5 w-3.5" aria-label="Upload" />
+            )}
+            <span>{formatRelative(invoice.received_at)}</span>
+            {invoice.sender_email && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="truncate max-w-[14ch]">
+                  {invoice.sender_email}
+                </span>
+              </>
+            )}
+          </div>
+          {invoice.assigned_to_id && (
+            <AssigneeChip invoice={invoice} />
+          )}
+        </div>
+
+        {/* Bottom row: status + post error */}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <StatusBadge status={invoice.status} />
+            {invoice.status === "approved" && invoice.qbo_post_error && (
+              <span className="text-[10px] text-red-700 uppercase tracking-wider">
+                Post failed
+              </span>
+            )}
+          </div>
+          <span className="text-xs font-semibold text-navy">
+            {linkLabelFor(invoice.status)} →
+          </span>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+function AssigneeChip({ invoice }: { invoice: Invoice }) {
+  const label =
+    invoice.assigned_to_name ||
+    invoice.assigned_to_email ||
+    invoice.assigned_to_id ||
+    "";
+  const initials = makeInitials(label);
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className="inline-flex items-center justify-center h-5 w-5 bg-navy text-stone text-[9px] font-semibold tracking-wider"
+        aria-hidden
+      >
+        {initials}
+      </span>
+      <span className="truncate max-w-[10ch] text-graphite">{label}</span>
+    </div>
+  );
+}

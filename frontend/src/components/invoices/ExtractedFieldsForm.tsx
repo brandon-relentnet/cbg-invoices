@@ -231,7 +231,7 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
 
         {/* ---------- Invoice metadata ---------- */}
         <FormSection title="Invoice details">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Input
               label="Invoice #"
               labelTone="quiet"
@@ -263,7 +263,7 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
 
         {/* ---------- Amounts ---------- */}
         <FormSection title="Amounts">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Input
               label="Subtotal"
               labelTone="quiet"
@@ -312,7 +312,8 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
           {form.line_items.length === 0 ? (
             <p className="text-xs text-slate-500 italic py-2">No line items extracted.</p>
           ) : (
-            <div className="border border-slate-200">
+            <div className="border border-slate-200 overflow-x-auto -mx-1 sm:mx-0">
+              <div className="min-w-[460px]">
               {/* Header row */}
               <div className="grid grid-cols-12 gap-0 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                 <div className="col-span-6 px-2 py-1.5">Description</div>
@@ -384,6 +385,7 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
         </FormSection>

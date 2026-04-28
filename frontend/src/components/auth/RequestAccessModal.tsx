@@ -79,7 +79,7 @@ export function RequestAccessModal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className="w-full max-w-md bg-white border-t-4 border-amber relative"
+            className="w-full max-w-md bg-white border-t-4 border-amber relative max-h-[90vh] overflow-y-auto"
           >
             <button
               type="button"

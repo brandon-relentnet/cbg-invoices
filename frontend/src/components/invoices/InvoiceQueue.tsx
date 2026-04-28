@@ -3,7 +3,7 @@ import { UserCircleIcon } from "@heroicons/react/24/outline";
 import { useUser } from "@/lib/auth";
 import { useInvoices } from "@/lib/invoices";
 import type { InvoiceStatus } from "@/types";
-import { InvoiceRow } from "./InvoiceRow";
+import { InvoiceRow, InvoiceCard } from "./InvoiceRow";
 import { UploadDropzone } from "./UploadDropzone";
 import { cn } from "@/lib/cn";
 
@@ -113,7 +113,7 @@ export function InvoiceQueue() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Results */}
       <div className="bg-white border-t-4 border-amber">
         {isLoading && <QueueSkeleton />}
         {error && (
@@ -125,24 +125,34 @@ export function InvoiceQueue() {
           <EmptyState filterKey={filterKey} mineOnly={mineOnly} />
         )}
         {!isLoading && !error && !empty && (
-          <table className="w-full">
-            <thead className="bg-stone/50">
-              <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
-                <th className="px-4 py-3 text-left">Received</th>
-                <th className="px-4 py-3 text-left">Vendor</th>
-                <th className="px-4 py-3 text-left">Invoice #</th>
-                <th className="px-4 py-3 text-right">Amount</th>
-                <th className="px-4 py-3 text-left">Assignee</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            {/* Mobile / tablet: stacked cards */}
+            <ul className="md:hidden divide-y divide-stone/60">
               {invoices.map((inv) => (
-                <InvoiceRow key={inv.id} invoice={inv} />
+                <InvoiceCard key={inv.id} invoice={inv} />
               ))}
-            </tbody>
-          </table>
+            </ul>
+
+            {/* Desktop: full table */}
+            <table className="hidden md:table w-full">
+              <thead className="bg-stone/50">
+                <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
+                  <th className="px-4 py-3 text-left">Received</th>
+                  <th className="px-4 py-3 text-left">Vendor</th>
+                  <th className="px-4 py-3 text-left">Invoice #</th>
+                  <th className="px-4 py-3 text-right">Amount</th>
+                  <th className="px-4 py-3 text-left">Assignee</th>
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv) => (
+                  <InvoiceRow key={inv.id} invoice={inv} />
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
         {data && data.total > invoices.length && !mineOnly && (
           <div className="px-4 py-3 text-xs text-slate-500 border-t border-stone/60">

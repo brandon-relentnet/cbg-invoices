@@ -380,9 +380,9 @@ function InvoiceDetailPage() {
         </div>
       )}
 
-      {/* Two-column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        <div className="lg:col-span-3 h-[calc(100vh-16rem)] min-h-[600px]">
+      {/* Two-column on lg+; PDF on top, form below on smaller screens. */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 md:gap-6">
+        <div className="lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]">
           <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url ?? undefined} />
         </div>
 
@@ -463,7 +463,7 @@ function InvoiceDetailPage() {
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 20, opacity: 0 }}
-              className="bg-white w-full max-w-md border-t-4 border-amber"
+              className="bg-white w-full max-w-md border-t-4 border-amber max-h-[90vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="p-6">
@@ -812,7 +812,7 @@ function ActionFooter(props: FooterProps) {
   const isReapproving = forceEdit && invoice.status === "approved";
 
   return (
-    <div className="sticky bottom-0 mt-8 -mx-8 px-8 py-4 bg-stone border-t-2 border-navy flex items-center justify-between gap-3 flex-wrap z-20">
+    <div className="sticky bottom-0 mt-6 md:mt-8 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 py-3 md:py-4 bg-stone border-t-2 border-navy flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 z-20">
       <div className="flex items-center gap-3 text-xs text-slate-600">
         {showEditor ? (
           dirty ? (
@@ -827,7 +827,7 @@ function ActionFooter(props: FooterProps) {
           "Status: " + invoice.status.replace(/_/g, " ")
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
         {isReapproving && (
           <Button variant="ghost" onClick={onCancelEdit}>
             Cancel

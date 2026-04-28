@@ -57,7 +57,26 @@ function VendorsPage() {
       )}
       {vendors.length > 0 && (
         <div className="bg-white border-t-4 border-amber">
-          <table className="w-full">
+          {/* Mobile: stacked rows */}
+          <ul className="md:hidden divide-y divide-stone/60">
+            {vendors.map((v) => (
+              <li key={v.id} className="px-4 py-3">
+                <div className="font-semibold text-navy truncate">
+                  {v.display_name}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                  {v.email && <span>{v.email}</span>}
+                  {v.qbo_id && (
+                    <span className="font-mono">QBO #{v.qbo_id}</span>
+                  )}
+                  <span>Synced {formatRelative(v.last_synced_at)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* Desktop: full table */}
+          <table className="hidden md:table w-full">
             <thead className="bg-stone/50">
               <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
                 <th className="px-4 py-3 text-left">Vendor</th>

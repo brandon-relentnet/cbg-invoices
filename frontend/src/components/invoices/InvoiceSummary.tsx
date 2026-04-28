@@ -77,29 +77,31 @@ export function InvoiceSummary({ invoice, vendors, projects }: Props) {
 
       {invoice.line_items.length > 0 && (
         <DetailCard title="Line items">
-          <div className="border border-slate-200">
-            <div className="grid grid-cols-12 gap-0 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              <div className="col-span-7 px-2 py-1.5">Description</div>
-              <div className="col-span-2 px-2 py-1.5 text-right">Qty</div>
-              <div className="col-span-3 px-2 py-1.5 text-right">Amount</div>
-            </div>
-            <div className="divide-y divide-slate-100">
-              {invoice.line_items.map((li, idx) => (
-                <div
-                  key={idx}
-                  className="grid grid-cols-12 gap-0 px-2 py-1.5 text-sm"
-                >
-                  <div className="col-span-7 truncate">
-                    {li.description || <span className="text-slate-400">—</span>}
+          <div className="border border-slate-200 overflow-x-auto -mx-1 sm:mx-0">
+            <div className="min-w-[420px]">
+              <div className="grid grid-cols-12 gap-0 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="col-span-7 px-2 py-1.5">Description</div>
+                <div className="col-span-2 px-2 py-1.5 text-right">Qty</div>
+                <div className="col-span-3 px-2 py-1.5 text-right">Amount</div>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {invoice.line_items.map((li, idx) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-12 gap-0 px-2 py-1.5 text-sm"
+                  >
+                    <div className="col-span-7 truncate">
+                      {li.description || <span className="text-slate-400">—</span>}
+                    </div>
+                    <div className="col-span-2 text-right tabular-nums text-slate-600">
+                      {li.quantity ?? "—"}
+                    </div>
+                    <div className="col-span-3 text-right tabular-nums">
+                      {formatCents(li.amount_cents, invoice.currency)}
+                    </div>
                   </div>
-                  <div className="col-span-2 text-right tabular-nums text-slate-600">
-                    {li.quantity ?? "—"}
-                  </div>
-                  <div className="col-span-3 text-right tabular-nums">
-                    {formatCents(li.amount_cents, invoice.currency)}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </DetailCard>

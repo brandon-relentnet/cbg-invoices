@@ -8,6 +8,7 @@ import {
   Cog6ToothIcon,
   UsersIcon,
   ArrowRightOnRectangleIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/cn";
@@ -30,7 +31,13 @@ const NAV: NavItem[] = [
   { to: "/settings", label: "Settings", Icon: Cog6ToothIcon },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  drawerOpen = false,
+  onCloseDrawer,
+}: {
+  drawerOpen?: boolean;
+  onCloseDrawer?: () => void;
+}) {
   const { pathname } = useLocation();
   const me = useMe();
   const canManage = me.data?.role === "owner" || me.data?.role === "admin";
@@ -39,16 +46,37 @@ export function Sidebar() {
   const pendingCount = reqQuery.data?.pending_count ?? 0;
 
   return (
-    <aside className="relative w-60 flex-shrink-0 bg-graphite bg-grid bg-noise text-stone overflow-hidden">
+    <aside
+      className={cn(
+        // Below md: fixed-position slide-out drawer with translate transition.
+        // md+: normal in-flow column with no transition shenanigans.
+        "fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw]",
+        "md:relative md:inset-auto md:z-auto md:w-60 md:max-w-none",
+        "flex-shrink-0 bg-graphite bg-grid bg-noise text-stone overflow-hidden",
+        "transition-transform duration-200 ease-out md:transition-none",
+        drawerOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+      )}
+      aria-label="Primary navigation"
+    >
       <div className="relative z-10 flex flex-col h-full">
-        {/* Brand */}
-        <div className="px-6 py-6 border-b border-stone/10">
-          <div className="text-xs font-bold uppercase tracking-widest text-amber">
-            Cambridge
+        {/* Brand + mobile close button */}
+        <div className="px-6 py-6 border-b border-stone/10 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-widest text-amber">
+              Cambridge
+            </div>
+            <div className="font-display text-xl text-stone leading-tight mt-0.5">
+              Invoice Portal
+            </div>
           </div>
-          <div className="font-display text-xl text-stone leading-tight mt-0.5">
-            Invoice Portal
-          </div>
+          <button
+            type="button"
+            onClick={onCloseDrawer}
+            aria-label="Close menu"
+            className="md:hidden -mr-2 -mt-1 p-2 text-slate-400 hover:text-stone"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
         </div>
 
         {/* Nav */}
