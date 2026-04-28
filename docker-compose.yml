@@ -8,6 +8,14 @@
 #   bind mounts for hot reload, dev build targets, and env_file loading
 #   from local .env. The Makefile does this automatically — `make up`,
 #   `make down`, etc. behave like before.
+#
+# Networking: we deliberately do NOT declare a custom `networks:` block.
+# When this file is deployed under Coolify, Traefik lives on the
+# `coolify` network and Coolify attaches our containers there for routing.
+# A custom bridge network would isolate our containers from Traefik and
+# cause intermittent 502s. The default network compose creates is enough
+# for service-to-service DNS (postgres, logto, backend, frontend) and
+# coexists fine with Coolify's network attachments.
 services:
   postgres:
     image: postgres:16-alpine
@@ -19,8 +27,6 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
-    networks:
-      - invoice_portal_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -39,8 +45,6 @@ services:
       DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/logto
       ENDPOINT: ${LOGTO_ENDPOINT}
       ADMIN_ENDPOINT: ${LOGTO_ADMIN_ENDPOINT}
-    networks:
-      - invoice_portal_net
     # First boot seeds the schema; subsequent boots are no-ops thanks to --swe.
     # `alteration deploy latest` applies any pending Logto migrations.
     entrypoint:
@@ -85,8 +89,6 @@ services:
       QBO_DEFAULT_EXPENSE_ACCOUNT_ID: ${QBO_DEFAULT_EXPENSE_ACCOUNT_ID}
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_FROM: ${RESEND_FROM}
-    networks:
-      - invoice_portal_net
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -116,12 +118,6 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    networks:
-      - invoice_portal_net
 
 volumes:
   pgdata:
-
-networks:
-  invoice_portal_net:
-    driver: bridge
