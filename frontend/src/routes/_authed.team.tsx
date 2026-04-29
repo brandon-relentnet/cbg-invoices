@@ -10,7 +10,6 @@
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import {
   CheckCircleIcon,
   ClipboardDocumentIcon,
@@ -19,6 +18,7 @@ import {
   PlusIcon,
   TrashIcon,
   UserPlusIcon,
+  UsersIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -31,7 +31,6 @@ import { Select } from "@/components/ui/Select";
 import {
   memberInitials,
   memberLabel,
-  roleRankDelta,
   useChangeRole,
   useInviteUser,
   useMe,

@@ -28,7 +28,6 @@ class InvoiceStatus(str, enum.Enum):
     EXTRACTING = "extracting"
     EXTRACTION_FAILED = "extraction_failed"
     READY_FOR_REVIEW = "ready_for_review"
-    PENDING = "pending"
     APPROVED = "approved"
     POSTED_TO_QBO = "posted_to_qbo"
     REJECTED = "rejected"

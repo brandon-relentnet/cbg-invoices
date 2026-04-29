@@ -211,7 +211,6 @@ async function pollUntilDone(
     if (
       current.status === "ready_for_review" ||
       current.status === "approved" ||
-      current.status === "pending" ||
       current.status === "posted_to_qbo"
     ) {
       ctx.updateTask(taskId, { kind: "done", file, invoice: current });

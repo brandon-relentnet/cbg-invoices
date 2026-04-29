@@ -41,20 +41,41 @@ router = APIRouter(tags=["invoices"])
 
 @router.get("", response_model=InvoiceListResponse)
 async def list_invoices(
-    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     status_filter: Annotated[list[InvoiceStatus] | None, Query(alias="status")] = None,
+    assigned: Annotated[str | None, Query(pattern="^(true|false|mine)$")] = None,
     q: str | None = None,
     job: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
+    """List invoices with optional filters.
+
+    `assigned` semantics:
+      - "true"  → only invoices with an assignee (any user)
+      - "false" → only unassigned invoices
+      - "mine"  → assigned specifically to the current user
+      - None    → no assignment filter
+    """
     stmt = select(Invoice)
     count_stmt = select(func.count(Invoice.id))
 
     if status_filter:
         stmt = stmt.where(Invoice.status.in_(status_filter))
         count_stmt = count_stmt.where(Invoice.status.in_(status_filter))
+    if assigned == "true":
+        cond = Invoice.assigned_to_id.is_not(None)
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    elif assigned == "false":
+        cond = Invoice.assigned_to_id.is_(None)
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    elif assigned == "mine":
+        cond = Invoice.assigned_to_id == user.id
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
     if q:
         like = f"%{q.lower()}%"
         cond = or_(
@@ -260,21 +281,18 @@ async def patch_invoice(
 
 # ---------- Lifecycle transitions ----------
 #
-# Status transitions (see AGENTS.md / plan):
+# Status transitions:
 #
 #   ready_for_review ──┬─► approved ──► posted_to_qbo
-#                      ├─► pending (parking lot)
 #                      └─► rejected
-#
-#   pending ──► ready_for_review    (send back)
-#   pending ──► approved            (approve without posting)
-#   pending ──► rejected
 #
 #   approved ──► posted_to_qbo      (manual post)
 #   approved ──► ready_for_review   (unapprove, back to editing)
-#   approved ──► pending            (park it)
 #
-# Assignment is a *visibility* feature — it never gates permission.
+# Assignment is a *workflow signaling* feature — having an assignee moves
+# the invoice from "Need Review" to "Assigned" in the queue UI, but doesn't
+# gate permission to act. Anyone authenticated can still approve / post /
+# reassign / etc. regardless of who's assigned.
 
 
 def _ensure_approvable(invoice: Invoice) -> None:
@@ -305,7 +323,7 @@ async def approve_invoice(
 ):
     """Confirm the invoice is correct. Does NOT post to QBO — use /post next.
 
-    Allowed from: ready_for_review, pending, extraction_failed (fix-and-approve).
+    Allowed from: ready_for_review, extraction_failed (fix-and-approve).
     """
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
@@ -391,54 +409,20 @@ async def approve_and_post(
     return await _detail_with_pdf(invoice)
 
 
-@router.post("/{invoice_id}/pending", response_model=InvoiceDetail)
-async def send_to_pending(
-    invoice_id: UUID,
-    user: Annotated[CurrentUser, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    body: AssignInvoiceRequest | None = None,
-):
-    """Park an invoice — optionally assigning it to a team member to handle."""
-    invoice = await session.get(Invoice, invoice_id)
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.status == InvoiceStatus.POSTED_TO_QBO:
-        raise HTTPException(status_code=409, detail="Cannot park a posted invoice")
-    if invoice.status == InvoiceStatus.REJECTED:
-        raise HTTPException(status_code=409, detail="Cannot park a rejected invoice")
-
-    invoice.status = InvoiceStatus.PENDING
-    if body:
-        invoice.assigned_to_id = body.user_id
-        invoice.assigned_to_email = body.user_email
-        invoice.assigned_to_name = body.user_name
-        invoice.assigned_at = datetime.now(UTC)
-    await audit.record(
-        session,
-        actor_id=user.id,
-        actor_email=user.email,
-        action="invoice_sent_to_pending",
-        invoice_id=invoice_id,
-        message=(body.user_email or body.user_id) if body else None,
-    )
-    await session.commit()
-    return await _detail_with_pdf(invoice)
-
-
 @router.post("/{invoice_id}/unapprove", response_model=InvoiceDetail)
 async def unapprove_invoice(
     invoice_id: UUID,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Revert APPROVED or PENDING back to READY_FOR_REVIEW for more edits."""
+    """Revert an APPROVED invoice back to READY_FOR_REVIEW for more edits."""
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.status not in {InvoiceStatus.APPROVED, InvoiceStatus.PENDING}:
+    if invoice.status != InvoiceStatus.APPROVED:
         raise HTTPException(
             status_code=409,
-            detail="Only approved or pending invoices can be unapproved",
+            detail="Only approved invoices can be unapproved",
         )
 
     invoice.status = InvoiceStatus.READY_FOR_REVIEW

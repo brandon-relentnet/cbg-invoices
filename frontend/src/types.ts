@@ -3,7 +3,6 @@ export type InvoiceStatus =
   | "extracting"
   | "extraction_failed"
   | "ready_for_review"
-  | "pending"
   | "approved"
   | "posted_to_qbo"
   | "rejected";

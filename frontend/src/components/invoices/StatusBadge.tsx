@@ -1,12 +1,16 @@
 import { Badge } from "@/components/ui/Badge";
-import type { InvoiceStatus } from "@/types";
+import type { Invoice, InvoiceStatus } from "@/types";
 
 /**
- * Each status's badge tone, label, and a leading status dot. The dot is the
- * fastest visual scan signal — its color tells you the overall state at a
- * glance even when the badge text is truncated. Tones use higher-contrast
- * borders + text colors than before so the chips read clearly on small
- * phone screens against the stone bg.
+ * Primary status badge — the one-glance signal of where an invoice sits.
+ *
+ * The dot color is the fastest visual cue when the badge text is truncated.
+ * Tones use higher-contrast borders + text colors so chips read clearly on
+ * small phone screens against the stone bg.
+ *
+ * Pending (the old "in flight" status) was removed in favor of the queue's
+ * Need Review / Assigned tabs — workflow stage now lives in the assignment
+ * and active filter, not in a separate status value.
  */
 const STATUS_CONFIG: Record<
   InvoiceStatus,
@@ -19,9 +23,7 @@ const STATUS_CONFIG: Record<
     pulseDot?: boolean;
   }
 > = {
-  // Just-arrived, awaiting extraction
   received: { tone: "slate", label: "Received", dotColor: "#64748b" },
-  // Active extraction in progress
   extracting: {
     tone: "blue",
     label: "Extracting",
@@ -38,7 +40,6 @@ const STATUS_CONFIG: Record<
     label: "Needs review",
     dotColor: "#c8923c",
   },
-  pending: { tone: "slate", label: "Pending", dotColor: "#0b1b25" },
   approved: { tone: "green", label: "Approved", dotColor: "#15803d" },
   posted_to_qbo: { tone: "navy", label: "Posted", dotColor: "#c8923c" },
   rejected: { tone: "red", label: "Rejected", dotColor: "#7f1d1d" },
@@ -52,4 +53,42 @@ export function StatusBadge({ status }: { status: InvoiceStatus }) {
       {cfg.label}
     </Badge>
   );
+}
+
+/**
+ * Compact secondary indicator that adds context to an "approved" row inside
+ * the merged Approved tab. Renders nothing for invoices in any other state.
+ *
+ *   - approved + qbo_post_error → red "Post failed"
+ *   - approved + no bill_id     → muted "Pending post"
+ *   - posted_to_qbo             → navy "#1234" (the QBO bill number,
+ *                                  if present)
+ *   - rejected with reason in notes → handled separately on the detail page,
+ *                                     not here.
+ */
+export function PostStateBadge({ invoice }: { invoice: Pick<Invoice, "status" | "qbo_bill_id" | "qbo_post_error"> }) {
+  if (invoice.status === "approved") {
+    if (invoice.qbo_post_error) {
+      return (
+        <Badge tone="red" dot dotColor="#b91c1c">
+          Post failed
+        </Badge>
+      );
+    }
+    if (!invoice.qbo_bill_id) {
+      return (
+        <Badge tone="slate" dot dotColor="#94a3b8">
+          Pending post
+        </Badge>
+      );
+    }
+  }
+  if (invoice.status === "posted_to_qbo" && invoice.qbo_bill_id) {
+    return (
+      <Badge tone="navy">
+        <span className="font-mono">#{invoice.qbo_bill_id}</span>
+      </Badge>
+    );
+  }
+  return null;
 }

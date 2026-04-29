@@ -15,6 +15,13 @@ import type {
 
 export interface ListParams {
   status?: InvoiceStatus[];
+  /**
+   * Server-side assignment filter:
+   * - "true"  → only invoices that have an assignee
+   * - "false" → only unassigned invoices
+   * - "mine"  → assigned specifically to the current user
+   */
+  assigned?: "true" | "false" | "mine";
   q?: string;
   /** Filter by Cambridge job number (case-insensitive substring match). */
   job?: string;
@@ -27,6 +34,7 @@ function toQuery(params: ListParams): string {
   if (params.status) {
     for (const s of params.status) sp.append("status", s);
   }
+  if (params.assigned) sp.set("assigned", params.assigned);
   if (params.q) sp.set("q", params.q);
   if (params.job) sp.set("job", params.job);
   if (params.page) sp.set("page", String(params.page));
@@ -157,22 +165,6 @@ export function usePostInvoice(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => request<Invoice>(`/api/invoices/${id}/post`, { method: "POST" }),
-    onSuccess: (data) => {
-      qc.setQueryData(qk.invoices.detail(id), data);
-      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
-    },
-  });
-}
-
-export function useSendToPending(id: string) {
-  const { request } = useApi();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (assignment: AssignPayload | null) =>
-      request<Invoice>(`/api/invoices/${id}/pending`, {
-        method: "POST",
-        body: (assignment ?? undefined) as unknown as BodyInit,
-      }),
     onSuccess: (data) => {
       qc.setQueryData(qk.invoices.detail(id), data);
       void qc.invalidateQueries({ queryKey: qk.invoices.root() });

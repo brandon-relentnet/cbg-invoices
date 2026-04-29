@@ -7,7 +7,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import type { Invoice } from "@/types";
-import { StatusBadge } from "@/components/invoices/StatusBadge";
+import { StatusBadge, PostStateBadge } from "@/components/invoices/StatusBadge";
 import { formatCents, formatRelative } from "@/lib/format";
 import { usePostInvoice } from "@/lib/invoices";
 import { useQboStatus } from "@/lib/qbo";
@@ -60,12 +60,10 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
         <AssigneeCell invoice={invoice} />
       </td>
       <td className="px-4 py-3 text-sm">
-        <StatusBadge status={invoice.status} />
-        {invoice.status === "approved" && invoice.qbo_post_error && (
-          <div className="text-[10px] text-red-700 mt-0.5 uppercase tracking-wider">
-            Post failed
-          </div>
-        )}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <StatusBadge status={invoice.status} />
+          <PostStateBadge invoice={invoice} />
+        </div>
       </td>
       <td className="px-4 py-3 text-right whitespace-nowrap">
         <QuickAction invoice={invoice} />
@@ -177,8 +175,6 @@ function linkLabelFor(status: Invoice["status"]): string {
     case "ready_for_review":
     case "extraction_failed":
       return "Review";
-    case "pending":
-      return "Open";
     case "approved":
       return "Post";
     case "posted_to_qbo":
@@ -261,15 +257,11 @@ export function InvoiceCard({ invoice }: { invoice: Invoice }) {
           )}
         </div>
 
-        {/* Bottom row: status + post error */}
+        {/* Bottom row: status + post-state badge */}
         <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <StatusBadge status={invoice.status} />
-            {invoice.status === "approved" && invoice.qbo_post_error && (
-              <span className="text-[10px] text-red-700 uppercase tracking-wider">
-                Post failed
-              </span>
-            )}
+            <PostStateBadge invoice={invoice} />
           </div>
           <span className="text-xs font-semibold text-navy">
             {linkLabelFor(invoice.status)} →

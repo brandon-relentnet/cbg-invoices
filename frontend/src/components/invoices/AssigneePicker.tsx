@@ -9,8 +9,6 @@ interface Props {
   title: string;
   description?: string;
   confirmLabel?: string;
-  /** Allow "no one" to be submitted. Useful for pending-without-assignee. */
-  allowEmpty?: boolean;
   onClose: () => void;
   onSelect: (user: TeamMember | null) => void;
   loading?: boolean;
@@ -21,7 +19,6 @@ export function AssigneePicker({
   title,
   description,
   confirmLabel = "Assign",
-  allowEmpty = false,
   onClose,
   onSelect,
   loading,
@@ -41,12 +38,7 @@ export function AssigneePicker({
   });
 
   function handleConfirm() {
-    if (!selectedId) {
-      if (allowEmpty) {
-        onSelect(null);
-      }
-      return;
-    }
+    if (!selectedId) return;
     const member = data?.users.find((m) => m.id === selectedId);
     if (member) onSelect(member);
   }
@@ -132,15 +124,6 @@ export function AssigneePicker({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          {allowEmpty && (
-            <Button
-              variant="secondary"
-              onClick={() => onSelect(null)}
-              disabled={loading}
-            >
-              Skip assignment
-            </Button>
-          )}
           <Button
             variant="primary"
             onClick={handleConfirm}

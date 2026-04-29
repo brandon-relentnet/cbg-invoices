@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
@@ -14,6 +13,8 @@ import {
   UserPlusIcon,
   XCircleIcon,
 } from "@heroicons/react/24/outline";
+// ClockIcon stays in scope below — used in the StatusBanner for the
+// "approved but QBO disconnected" case.
 import { PageHeader } from "@/components/layout/AppShell";
 import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { BottomSheet } from "@/components/ui/BottomSheet";
@@ -34,7 +35,6 @@ import {
   useProjects,
   useReextractInvoice,
   useRejectInvoice,
-  useSendToPending,
   useUnapproveInvoice,
   useUnassignInvoice,
   useVendors,
@@ -51,15 +51,14 @@ export const Route = createFileRoute("/_authed/invoices_/$id")({
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// The review page has three macro-modes:
-//   • "review"  — status=ready_for_review (or extraction_failed). Editable form.
-//   • "pending" — status=pending. Read-only summary + Edit button. Can still
-//                 be approved or reassigned.
-//   • "locked"  — status=approved / posted_to_qbo / rejected. Read-only
-//                 summary + Edit for approved (which unapproves it first).
+// The review page has two macro-modes:
+//   • "review" — status=ready_for_review / extraction_failed / received /
+//                extracting. Editable form.
+//   • "locked" — status=approved / posted_to_qbo / rejected. Read-only
+//                summary + Edit for approved (which unapproves it first).
 // ──────────────────────────────────────────────────────────────────────────
 
-type Mode = "review" | "pending" | "locked";
+type Mode = "review" | "locked";
 
 function InvoiceDetailPage() {
   const { id } = Route.useParams();
@@ -76,14 +75,17 @@ function InvoiceDetailPage() {
   const approve = useApproveInvoice(id);
   const approveAndPost = useApproveAndPostInvoice(id);
   const postOnly = usePostInvoice(id);
-  const sendToPending = useSendToPending(id);
   const unapprove = useUnapproveInvoice(id);
   const assign = useAssignInvoice(id);
   const unassign = useUnassignInvoice(id);
   const reject = useRejectInvoice(id);
   const reextract = useReextractInvoice(id);
 
-  const pending = useRef<InvoicePatchPayload | null>(null);
+  // Buffer the latest unsaved patch payload from ExtractedFieldsForm so we
+  // can flush it on approve/post without re-rendering on every keystroke.
+  // Named `pendingPatch` to disambiguate from the (now-removed) Pending
+  // workflow status.
+  const pendingPatch = useRef<InvoicePatchPayload | null>(null);
   const [dirty, setDirty] = useState(false);
   const [forceEdit, setForceEdit] = useState(false);
 
@@ -92,7 +94,7 @@ function InvoiceDetailPage() {
 
   // Assignment modals — one flow per action that needs an assignee.
   const [assignFlow, setAssignFlow] = useState<
-    null | "approve-and-assign" | "pending-with-assign" | "reassign"
+    null | "approve-and-assign" | "reassign"
   >(null);
 
   const invoice = invoiceQuery.data;
@@ -123,14 +125,13 @@ function InvoiceDetailPage() {
     ) {
       return "review";
     }
-    if (invoice.status === "pending") return "pending";
     return "locked";
   }, [invoice]);
 
   const showEditor = mode === "review" || forceEdit;
 
   // Stop the burst poll once the post resolves: either status flipped to
-  // posted_to_qbo / pending / rejected / etc, OR qbo_post_error appeared.
+  // posted_to_qbo / rejected / etc, OR qbo_post_error appeared.
   useEffect(() => {
     if (!invoice) return;
     if (
@@ -152,6 +153,10 @@ function InvoiceDetailPage() {
       !invoice?.qbo_post_error);
 
   // Keyboard shortcuts — context-aware
+  //   ⌘+Enter        : primary action (Approve in review mode, Post when
+  //                    already approved)
+  //   ⌘+Shift+Enter  : Approve & Post in review mode
+  //   ⌘+Shift+R      : open reject modal
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (!invoice) return;
@@ -160,17 +165,13 @@ function InvoiceDetailPage() {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         if (mode === "review") void handleApprove();
-        else if (mode === "pending") void handleApprove();
         else if (invoice.status === "approved") void handlePost();
       } else if (e.key === "Enter" && e.shiftKey) {
         e.preventDefault();
-        if (mode === "review" || mode === "pending") void handleApproveAndPost();
+        if (mode === "review") void handleApproveAndPost();
       } else if (e.shiftKey && (e.key === "R" || e.key === "r")) {
         e.preventDefault();
         setShowRejectModal(true);
-      } else if (e.shiftKey && (e.key === "P" || e.key === "p")) {
-        e.preventDefault();
-        if (mode === "review") void handleSendToPending(null);
       }
     }
     window.addEventListener("keydown", handler);
@@ -200,7 +201,6 @@ function InvoiceDetailPage() {
     approve.isPending ||
     approveAndPost.isPending ||
     postOnly.isPending ||
-    sendToPending.isPending ||
     unapprove.isPending ||
     assign.isPending ||
     unassign.isPending ||
@@ -208,8 +208,8 @@ function InvoiceDetailPage() {
     reextract.isPending;
 
   async function flushDirty() {
-    if (dirty && pending.current) {
-      await patch.mutateAsync(pending.current);
+    if (dirty && pendingPatch.current) {
+      await patch.mutateAsync(pendingPatch.current);
       setDirty(false);
     }
   }
@@ -240,21 +240,6 @@ function InvoiceDetailPage() {
       user_email: member.email,
       user_name: member.name,
     });
-    setAssignFlow(null);
-    setForceEdit(false);
-  }
-
-  async function handleSendToPending(assignee: TeamMember | null) {
-    await flushDirty();
-    await sendToPending.mutateAsync(
-      assignee
-        ? {
-            user_id: assignee.id,
-            user_email: assignee.email,
-            user_name: assignee.name,
-          }
-        : null,
-    );
     setAssignFlow(null);
     setForceEdit(false);
   }
@@ -290,10 +275,10 @@ function InvoiceDetailPage() {
   }
 
   async function handleEdit() {
-    // For APPROVED/PENDING, this unapproves first. For POSTED_TO_QBO, we don't
+    // For APPROVED, this unapproves first. For POSTED_TO_QBO, we don't
     // allow edits (no button rendered). For extraction_failed the form is
     // already editable.
-    if (invoice?.status === "approved" || invoice?.status === "pending") {
+    if (invoice?.status === "approved") {
       await handleUnapprove();
     } else {
       setForceEdit(true);
@@ -302,26 +287,20 @@ function InvoiceDetailPage() {
 
   const pickerTitle: Record<NonNullable<typeof assignFlow>, string> = {
     "approve-and-assign": "Approve & assign",
-    "pending-with-assign": "Send to pending",
     reassign: "Reassign invoice",
   };
   const pickerDescription: Record<NonNullable<typeof assignFlow>, string> = {
     "approve-and-assign": "Approve this invoice and put it on someone else's plate.",
-    "pending-with-assign":
-      "Move this invoice to Pending — with or without an assignee to handle it.",
     reassign: "Move this invoice to a different team member.",
   };
   const pickerConfirm: Record<NonNullable<typeof assignFlow>, string> = {
     "approve-and-assign": "Approve & assign",
-    "pending-with-assign": "Send to pending",
     reassign: "Reassign",
   };
-  const pickerAllowEmpty = assignFlow === "pending-with-assign";
 
   async function onPickerSelect(member: TeamMember | null) {
     if (!assignFlow) return;
     if (assignFlow === "approve-and-assign") await handleApproveAndAssign(member);
-    else if (assignFlow === "pending-with-assign") await handleSendToPending(member);
     else if (assignFlow === "reassign") await handleReassign(member);
   }
 
@@ -377,7 +356,7 @@ function InvoiceDetailPage() {
           <span className="text-graphite font-medium">
             {invoice.assigned_to_name || invoice.assigned_to_email || invoice.assigned_to_id}
           </span>
-          {(mode === "review" || mode === "pending" || invoice.status === "approved") && (
+          {(mode === "review" || invoice.status === "approved") && (
             <>
               <button
                 type="button"
@@ -426,7 +405,7 @@ function InvoiceDetailPage() {
               vendors={vendorsQuery.data?.vendors ?? []}
               projects={projectsQuery.data?.projects ?? []}
               onChange={(p) => {
-                pending.current = p;
+                pendingPatch.current = p;
                 setDirty(true);
               }}
               disabled={false}
@@ -437,7 +416,6 @@ function InvoiceDetailPage() {
               vendors={vendorsQuery.data?.vendors ?? []}
               projects={projectsQuery.data?.projects ?? []}
               onEdit={handleEdit}
-              onReassign={() => setAssignFlow("reassign")}
               editBusy={unapprove.isPending}
             />
           )}
@@ -445,7 +423,7 @@ function InvoiceDetailPage() {
       </div>
 
       {/* Sticky action footer */}
-      {(showEditor || mode === "pending" || invoice.status === "approved") && (
+      {(showEditor || invoice.status === "approved") && (
         <ActionFooter
           invoice={invoice}
           dirty={dirty}
@@ -460,14 +438,12 @@ function InvoiceDetailPage() {
           onCancelEdit={() => {
             setForceEdit(false);
             setDirty(false);
-            pending.current = null;
+            pendingPatch.current = null;
           }}
           onReject={() => setShowRejectModal(true)}
           onApprove={handleApprove}
           onApproveAndPost={handleApproveAndPost}
           onApproveAndAssign={() => setAssignFlow("approve-and-assign")}
-          onSendToPending={() => handleSendToPending(null)}
-          onSendToPendingWithAssign={() => setAssignFlow("pending-with-assign")}
           onPost={handlePost}
           onUnapprove={handleUnapprove}
           patchPending={patch.isPending}
@@ -514,7 +490,6 @@ function InvoiceDetailPage() {
         title={assignFlow ? pickerTitle[assignFlow] : ""}
         description={assignFlow ? pickerDescription[assignFlow] : undefined}
         confirmLabel={assignFlow ? pickerConfirm[assignFlow] : undefined}
-        allowEmpty={pickerAllowEmpty}
         loading={busy}
         onClose={() => setAssignFlow(null)}
         onSelect={onPickerSelect}
@@ -633,14 +608,12 @@ function ReadOnlyView({
   vendors,
   projects,
   onEdit,
-  onReassign,
   editBusy,
 }: {
   invoice: Invoice;
   vendors: Vendor[];
   projects: Project[];
   onEdit: () => void;
-  onReassign: () => void;
   editBusy: boolean;
 }) {
   const canEdit =
@@ -657,20 +630,12 @@ function ReadOnlyView({
             title={
               invoice.status === "approved"
                 ? "Unapproves and reopens the form"
-                : invoice.status === "pending"
-                  ? "Reopens the form for edits"
-                  : "Edit fields"
+                : "Edit fields"
             }
           >
             <PencilSquareIcon className="h-4 w-4" />
             Edit
           </Button>
-          {invoice.status === "pending" && !invoice.assigned_to_id && (
-            <Button variant="ghost" size="sm" onClick={onReassign}>
-              <UserPlusIcon className="h-4 w-4" />
-              Assign to…
-            </Button>
-          )}
         </div>
       )}
       <InvoiceSummary invoice={invoice} vendors={vendors} projects={projects} />
@@ -697,8 +662,6 @@ interface FooterProps {
   onApprove: () => void;
   onApproveAndPost: () => void;
   onApproveAndAssign: () => void;
-  onSendToPending: () => void;
-  onSendToPendingWithAssign: () => void;
   onPost: () => void;
   onUnapprove: () => void;
   patchPending: boolean;
@@ -719,8 +682,6 @@ function ActionFooter(props: FooterProps) {
     onApprove,
     onApproveAndPost,
     onApproveAndAssign,
-    onSendToPending,
-    onSendToPendingWithAssign,
     onPost,
     onUnapprove,
     patchPending,
@@ -757,36 +718,6 @@ function ActionFooter(props: FooterProps) {
         onSelect: onApproveAndAssign,
         icon: <UserPlusIcon className="h-4 w-4" />,
       },
-      { divider: true, label: "", onSelect: () => {} },
-      {
-        label: "Send to Pending",
-        description: "Park for later — no assignee",
-        onSelect: onSendToPending,
-        icon: <ClockIcon className="h-4 w-4" />,
-      },
-      {
-        label: "Send to Pending (with assignee)",
-        description: "Park and assign to someone specific",
-        onSelect: onSendToPendingWithAssign,
-        icon: <UserPlusIcon className="h-4 w-4" />,
-      },
-    ];
-  } else if (invoice.status === "pending") {
-    primary = { label: "Approve", onClick: onApprove };
-    options = [
-      {
-        label: "Approve & Post to QBO",
-        description: qboConnected ? undefined : "Connect QuickBooks in Settings first",
-        onSelect: onApproveAndPost,
-        disabled: !qboConnected,
-        icon: <PaperAirplaneIcon className="h-4 w-4" />,
-      },
-      {
-        label: "Send back to Review",
-        description: "Re-open the editable form",
-        onSelect: onUnapprove,
-        icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
-      },
     ];
   } else if (invoice.status === "approved") {
     primary = {
@@ -797,14 +728,8 @@ function ActionFooter(props: FooterProps) {
     };
     options = [
       {
-        label: "Send to Pending",
-        description: "Park instead of posting",
-        onSelect: onSendToPending,
-        icon: <ClockIcon className="h-4 w-4" />,
-      },
-      {
         label: "Unapprove",
-        description: "Revert to Needs Review",
+        description: "Revert to Needs Review for more edits",
         onSelect: onUnapprove,
         icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
       },
@@ -814,8 +739,9 @@ function ActionFooter(props: FooterProps) {
     return null;
   }
 
-  const rejectVisible =
-    invoice.status !== "posted_to_qbo" && invoice.status !== "rejected";
+  // We only reach this point in non-terminal states (ready_for_review,
+  // extraction_failed, approved), so Reject is always allowed here.
+  const rejectVisible = true;
 
   // When forceEdit is on for an already-approved invoice, show an edit-mode
   // footer instead — "Save and re-approve" etc.
