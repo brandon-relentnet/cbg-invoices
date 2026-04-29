@@ -204,7 +204,7 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
         </div>
       </div>
 
-      <fieldset disabled={disabled} className="space-y-4">
+      <fieldset disabled={disabled} className="space-y-4 min-w-0">
         {/* ---------- Cambridge AP coding markup ----------
             Highest priority section — these fields drive the project +
             cost-code allocation in QBO and live audit. Sometimes auto-

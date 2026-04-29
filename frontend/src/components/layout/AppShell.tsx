@@ -39,7 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <MobileAppBar />
 
           <main
-            className="flex-1 overflow-y-auto bg-stone bg-dots"
+            className="flex-1 overflow-y-auto overflow-x-clip bg-stone bg-dots"
             style={{
               // Reserve space for the bottom tab bar on mobile so content
               // never sits underneath the last tab.
