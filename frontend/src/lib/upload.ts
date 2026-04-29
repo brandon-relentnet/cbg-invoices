@@ -31,7 +31,7 @@ const RESOURCE = (import.meta.env.VITE_LOGTO_RESOURCE as string) || "";
 /** Rotating status messages for the extracting phase. */
 const EXTRACTING_MESSAGES = [
   "Rendering PDF pages…",
-  "Asking Claude to read the invoice…",
+  "Reading the invoice…",
   "Parsing vendor and dates…",
   "Pulling line items…",
   "Cross-checking totals…",

@@ -411,7 +411,9 @@ function InvoiceDetailPage() {
                 aria-hidden
                 className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-navy border-r-transparent"
               />
-              <p className="mt-3 text-sm text-slate-600">Extracting fields with Claude…</p>
+              <p className="mt-3 text-sm text-slate-600">
+                Extracting invoice fields…
+              </p>
             </div>
           ) : showEditor ? (
             <ExtractedFieldsForm

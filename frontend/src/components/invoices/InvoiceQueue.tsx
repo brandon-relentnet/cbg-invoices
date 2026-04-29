@@ -201,17 +201,17 @@ function EmptyState({
   > = {
     needs_review: {
       title: "Inbox is clear",
-      body: "Nothing waiting on review. Upload a PDF above, or forward one to your Postmark address.",
+      body: "Nothing in the queue. Upload a PDF above, or have a vendor email it to your inbound address.",
       Icon: InboxIcon,
     },
     pending: {
       title: "No parked invoices",
-      body: "Invoices you Send to Pending will land here.",
+      body: "Invoices set aside for later show up here.",
       Icon: ClockIcon,
     },
     approved: {
       title: "Nothing waiting to post",
-      body: "Approve without posting to sit them here until you're ready.",
+      body: "Approve without posting and they'll wait here until you hit Post.",
       Icon: CheckCircleIcon,
     },
     posted: {

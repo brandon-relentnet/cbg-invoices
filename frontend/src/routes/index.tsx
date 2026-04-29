@@ -72,16 +72,17 @@ function Landing() {
         <div className="max-w-2xl w-full">
           <div className="border-l-2 border-amber pl-6 md:pl-8">
             <div className="text-[11px] font-bold uppercase tracking-[0.25em] text-amber mb-3">
-              Cambridge Building Group · Internal
+              Internal · For the Cambridge AP team
             </div>
             <h1 className="font-display text-5xl md:text-7xl text-navy leading-[1.05] tracking-tight">
               Invoice
               <br />
-              <span className="text-amber">Portal.</span>
+              <span className="text-amber">Portal</span>
             </h1>
             <p className="mt-6 text-base md:text-lg text-graphite/85 leading-relaxed max-w-xl">
-              Subcontractor invoices in. QuickBooks bills out. Reviewed,
-              project-tagged, and audit-trailed by the Cambridge AP team.
+              The internal AP system for Cambridge Building Group. Vendor
+              invoices arrive by email or upload, get tagged to the right
+              project, and post to QuickBooks once a PM approves them.
             </p>
 
             <div className="mt-10 flex flex-col sm:flex-row gap-3 sm:gap-4">
