@@ -400,11 +400,16 @@ function InvoiceDetailPage() {
 
       {/* Two-column on lg+; PDF on top, form below on smaller screens. */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 md:gap-6">
-        <div className="lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]">
+        {/* min-w-0 on both columns lets the grid actually shrink them to
+            their 60/40 share. Without it, the line-items table's
+            `min-w-[460px]` (intentional for inner horizontal scroll on
+            mobile) propagates upward and forces the whole grid wider
+            than the viewport, causing horizontal page scroll. */}
+        <div className="min-w-0 lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]">
           <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url ?? undefined} />
         </div>
 
-        <div className="lg:col-span-2">
+        <div className="min-w-0 lg:col-span-2">
           {invoice.status === "extracting" || invoice.status === "received" ? (
             <div className="text-center py-16 bg-white border-l-2 border-amber/60">
               <div
