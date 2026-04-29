@@ -8,7 +8,6 @@ import {
   Cog6ToothIcon,
   UsersIcon,
   ArrowRightOnRectangleIcon,
-  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/cn";
@@ -31,13 +30,11 @@ const NAV: NavItem[] = [
   { to: "/settings", label: "Settings", Icon: Cog6ToothIcon },
 ];
 
-export function Sidebar({
-  drawerOpen = false,
-  onCloseDrawer,
-}: {
-  drawerOpen?: boolean;
-  onCloseDrawer?: () => void;
-}) {
+/**
+ * Desktop-only sidebar. The mobile-drawer pattern was retired in favor
+ * of the BottomTabBar — this component is hidden below `md`.
+ */
+export function Sidebar() {
   const { pathname } = useLocation();
   const me = useMe();
   const canManage = me.data?.role === "owner" || me.data?.role === "admin";
@@ -47,39 +44,18 @@ export function Sidebar({
 
   return (
     <aside
-      className={cn(
-        // Below md: only render when drawerOpen=true, as a fixed-position
-        // overlay drawer above the page. When closed it's `display: none` so
-        // it can't push the main flex layout — the previous translate-only
-        // approach had the sidebar still consuming space in some browsers.
-        drawerOpen
-          ? "fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] flex"
-          : "hidden",
-        // md+: always in-flow normal column.
-        "md:relative md:inset-auto md:z-auto md:flex md:w-60 md:max-w-none md:flex-shrink-0",
-        "bg-graphite bg-grid bg-noise text-stone overflow-hidden",
-      )}
+      className="hidden md:flex md:relative md:flex-shrink-0 md:w-60 bg-graphite bg-grid bg-noise text-stone overflow-hidden"
       aria-label="Primary navigation"
     >
-      <div className="relative z-10 flex flex-col h-full">
-        {/* Brand + mobile close button */}
-        <div className="px-6 py-6 border-b border-stone/10 flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-widest text-amber">
-              Cambridge
-            </div>
-            <div className="font-display text-xl text-stone leading-tight mt-0.5">
-              Invoice Portal
-            </div>
+      <div className="relative z-10 flex flex-col h-full w-full">
+        {/* Brand */}
+        <div className="px-6 py-6 border-b border-stone/10">
+          <div className="text-xs font-bold uppercase tracking-widest text-amber">
+            Cambridge
           </div>
-          <button
-            type="button"
-            onClick={onCloseDrawer}
-            aria-label="Close menu"
-            className="md:hidden -mr-2 -mt-1 p-2 text-slate-400 hover:text-stone"
-          >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
+          <div className="font-display text-xl text-stone leading-tight mt-0.5">
+            Invoice Portal
+          </div>
         </div>
 
         {/* Nav */}

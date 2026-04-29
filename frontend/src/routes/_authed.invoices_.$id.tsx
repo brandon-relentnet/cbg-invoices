@@ -15,6 +15,7 @@ import {
   XCircleIcon,
 } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
+import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Button } from "@/components/ui/Button";
 import { SplitButton, type SplitButtonOption } from "@/components/ui/SplitButton";
 import { StatusBadge } from "@/components/invoices/StatusBadge";
@@ -94,6 +95,22 @@ function InvoiceDetailPage() {
   >(null);
 
   const invoice = invoiceQuery.data;
+
+  // Mobile app-bar title: "Review" + status badge inline. Keep concise so
+  // the right side has room for the back button.
+  useMobileAppBar({
+    title: "Review",
+    action: (
+      <button
+        type="button"
+        onClick={() => navigate({ to: "/invoices" })}
+        className="inline-flex items-center min-h-[36px] px-3 text-xs font-bold uppercase tracking-wider text-navy hover:text-amber"
+        aria-label="Back to queue"
+      >
+        ← Queue
+      </button>
+    ),
+  });
 
   const mode: Mode = useMemo(() => {
     if (!invoice) return "review";

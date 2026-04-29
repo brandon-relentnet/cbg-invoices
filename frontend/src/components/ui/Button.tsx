@@ -22,9 +22,11 @@ const variantStyles: Record<Variant, string> = {
 };
 
 const sizeStyles: Record<Size, string> = {
-  sm: "px-3 py-1.5 text-sm",
-  md: "px-4 py-2 text-sm",
-  lg: "px-6 py-3 text-base",
+  // Mobile gets a 44px tap target across all sizes (Apple HIG / WCAG 2.5.5);
+  // md+ shrinks back to the original densities.
+  sm: "min-h-[44px] md:min-h-0 px-3 py-1.5 text-sm",
+  md: "min-h-[44px] md:min-h-0 px-4 py-2 text-sm",
+  lg: "min-h-[44px] md:min-h-0 px-6 py-3 text-base",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(

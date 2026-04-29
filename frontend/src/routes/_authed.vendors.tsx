@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
+import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Button } from "@/components/ui/Button";
 import { useVendors } from "@/lib/invoices";
 import { useQboStatus, useSyncVendors } from "@/lib/qbo";
@@ -14,6 +15,24 @@ function VendorsPage() {
   const { data, isLoading, error } = useVendors();
   const sync = useSyncVendors();
   const qbo = useQboStatus();
+
+  useMobileAppBar({
+    title: "Vendors",
+    action: qbo.data?.connected ? (
+      <button
+        type="button"
+        onClick={() => sync.mutate()}
+        disabled={sync.isPending}
+        className="inline-flex items-center gap-1.5 min-h-[36px] px-3 text-xs font-bold uppercase tracking-wider text-navy hover:text-amber disabled:opacity-50"
+        aria-label="Sync vendors"
+      >
+        <ArrowPathIcon
+          className={`h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`}
+        />
+        Sync
+      </button>
+    ) : null,
+  });
 
   const lastSync = qbo.data?.last_vendor_sync_at
     ? formatRelative(qbo.data.last_vendor_sync_at)

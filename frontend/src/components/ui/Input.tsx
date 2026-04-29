@@ -45,7 +45,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           aria-describedby={error ? `${inputId}-err` : hint ? `${inputId}-hint` : undefined}
           className={cn(
             "block w-full border bg-stone/50 text-graphite",
-            size === "sm" ? "p-2 text-sm" : "p-3",
+            // Mobile: 44px tap target across both sizes; md+ keeps the
+            // original density so dense tabular forms still feel tight.
+            size === "sm"
+              ? "min-h-[44px] md:min-h-0 p-2 text-sm md:text-sm"
+              : "min-h-[44px] md:min-h-0 p-3 text-base md:text-sm",
             "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
             "placeholder:text-slate-400",
             "disabled:opacity-60 disabled:cursor-not-allowed",

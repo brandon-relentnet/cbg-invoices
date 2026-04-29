@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ChevronRightIcon, ChevronDownIcon } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
+import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { useAuditLog } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -12,6 +13,7 @@ export const Route = createFileRoute("/_authed/audit")({
 });
 
 function AuditPage() {
+  useMobileAppBar({ title: "Audit log" });
   const [actorFilter, setActorFilter] = useState("");
   const [actionFilter, setActionFilter] = useState("");
   const [page, setPage] = useState(1);

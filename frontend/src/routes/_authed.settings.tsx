@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { CheckCircleIcon, XCircleIcon } from "@heroicons/react/24/solid";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { PageHeader, SectionLabel } from "@/components/layout/AppShell";
+import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -26,6 +27,7 @@ export const Route = createFileRoute("/_authed/settings")({
 });
 
 function SettingsPage() {
+  useMobileAppBar({ title: "Settings" });
   const search = useSearch({ from: "/_authed/settings" });
   const qboQuery = useQboStatus();
   const accountsQuery = useExpenseAccounts(qboQuery.data?.connected ?? false);

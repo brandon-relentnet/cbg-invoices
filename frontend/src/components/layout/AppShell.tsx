@@ -1,72 +1,79 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { useLocation } from "@tanstack/react-router";
+import { useState, type ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
+import { BottomTabBar } from "./BottomTabBar";
+import { MobileAppBar, MobileAppBarProvider } from "./MobileAppBar";
+import { MoreSheet } from "./MoreSheet";
 
+/**
+ * Two distinct layouts depending on viewport:
+ *
+ *   Mobile (<md):
+ *     [MobileAppBar  — sticky top, page title + optional action]
+ *     [Main scroll   — content with px-4 padding]
+ *     [BottomTabBar  — sticky bottom, 5 tabs incl. "More" sheet]
+ *
+ *   Desktop (md+):
+ *     [Sidebar       — primary nav, in-flow column on the left]
+ *     [TopBar        — section banner]
+ *     [Main scroll   — content with px-8 padding]
+ *
+ * Pages drive the mobile app bar via `useMobileAppBar({ title, action })`
+ * exported from MobileAppBar. The provider wraps the whole shell so any
+ * page-level component can register its title without prop drilling.
+ */
 export function AppShell({ children }: { children: ReactNode }) {
-  // On <md the sidebar is a slide-out drawer toggled from the TopBar.
-  // On md+ it's always visible in flow and this state is ignored.
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const location = useLocation();
-
-  // Close the drawer on every route change so navigating doesn't leave it
-  // hanging open over the new page.
-  useEffect(() => {
-    setDrawerOpen(false);
-  }, [location.pathname]);
-
-  // Lock body scroll while the mobile drawer is open.
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [drawerOpen]);
-
-  // Esc closes the drawer
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrawerOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drawerOpen]);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-stone">
-      {/* Mobile backdrop */}
-      {drawerOpen && (
-        <button
-          type="button"
-          aria-label="Close menu"
-          onClick={() => setDrawerOpen(false)}
-          className="md:hidden fixed inset-0 bg-graphite/50 z-30"
+    <MobileAppBarProvider>
+      <div className="flex h-screen w-screen overflow-hidden bg-stone">
+        {/* Desktop sidebar — display:none below md */}
+        <Sidebar />
+
+        <div className="flex flex-col flex-1 min-w-0">
+          {/* Desktop top bar */}
+          <TopBar />
+
+          {/* Mobile top bar (sticks to top of the scroll area) */}
+          <MobileAppBar />
+
+          <main
+            className="flex-1 overflow-y-auto bg-stone bg-dots"
+            style={{
+              // Reserve space for the bottom tab bar on mobile so content
+              // never sits underneath the last tab.
+              paddingBottom: "calc(4rem + env(safe-area-inset-bottom))",
+            }}
+          >
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-5 md:py-8">
+              {children}
+            </div>
+          </main>
+
+          {/* On md+ the padding-bottom above is wasted (16px-ish); reset it */}
+          <style>{`
+            @media (min-width: 768px) {
+              main { padding-bottom: 0 !important; }
+            }
+          `}</style>
+        </div>
+
+        {/* Mobile bottom tabs — display:none on md+ */}
+        <BottomTabBar
+          moreOpen={moreOpen}
+          onOpenMore={() => setMoreOpen(true)}
         />
-      )}
-
-      <Sidebar
-        drawerOpen={drawerOpen}
-        onCloseDrawer={() => setDrawerOpen(false)}
-      />
-
-      <div className="flex flex-col flex-1 min-w-0">
-        <TopBar onToggleMenu={() => setDrawerOpen((v) => !v)} />
-        <main className="flex-1 overflow-y-auto bg-stone bg-dots">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-8">
-            {children}
-          </div>
-        </main>
+        <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} />
       </div>
-    </div>
+    </MobileAppBarProvider>
   );
 }
 
 /**
- * Page header with the "Our **Values**" accent pattern.
- * Second word is highlighted in amber.
+ * Page header with the "Our **Values**" accent pattern. Desktop-only by
+ * default — pages are expected to call `useMobileAppBar()` for the
+ * mobile equivalent.
  */
 export function PageHeader({
   title,
@@ -80,7 +87,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 md:mb-8 pb-5 md:pb-6 border-b border-stone/80">
+    <div className="hidden md:flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 md:mb-8 pb-5 md:pb-6 border-b border-stone/80">
       <div className="min-w-0">
         <h1 className="font-display text-3xl sm:text-4xl text-navy leading-tight">
           {title}

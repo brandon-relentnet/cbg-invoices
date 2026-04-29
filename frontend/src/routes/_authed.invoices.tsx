@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout/AppShell";
+import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { InvoiceQueue } from "@/components/invoices/InvoiceQueue";
 
 export const Route = createFileRoute("/_authed/invoices")({
@@ -7,6 +8,7 @@ export const Route = createFileRoute("/_authed/invoices")({
 });
 
 function InvoicesPage() {
+  useMobileAppBar({ title: "Invoices" });
   return (
     <>
       <PageHeader

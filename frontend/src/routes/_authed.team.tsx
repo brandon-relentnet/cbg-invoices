@@ -22,6 +22,7 @@ import {
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
+import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -72,6 +73,21 @@ function TeamPage() {
 
   const canManage = me?.role === "owner" || me?.role === "admin";
   const isOwner = me?.role === "owner";
+
+  useMobileAppBar({
+    title: "Team",
+    action: canManage ? (
+      <button
+        type="button"
+        onClick={() => setInviteOpen(true)}
+        className="inline-flex items-center gap-1.5 min-h-[36px] px-3 text-xs font-bold uppercase tracking-wider text-navy hover:text-amber"
+        aria-label="Invite member"
+      >
+        <UserPlusIcon className="h-4 w-4" />
+        Invite
+      </button>
+    ) : null,
+  });
 
   async function handleInvite(payload: { email: string; name: string }) {
     const res = await invite.mutateAsync({
