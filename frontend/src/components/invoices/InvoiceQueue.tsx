@@ -1,10 +1,19 @@
 import { useMemo, useState } from "react";
-import { UserCircleIcon } from "@heroicons/react/24/outline";
+import {
+  ArchiveBoxIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  InboxIcon,
+  PaperAirplaneIcon,
+  UserCircleIcon,
+} from "@heroicons/react/24/outline";
 import { useUser } from "@/lib/auth";
 import { useInvoices } from "@/lib/invoices";
 import type { InvoiceStatus } from "@/types";
 import { InvoiceRow, InvoiceCard } from "./InvoiceRow";
 import { UploadDropzone } from "./UploadDropzone";
+import { EmptyState as UiEmptyState } from "@/components/ui/EmptyState";
+import { FilterChips } from "@/components/ui/FilterChips";
 import { cn } from "@/lib/cn";
 
 // Simplified filter model: 5 primary tabs + a cross-cutting "Mine only" toggle.
@@ -60,27 +69,18 @@ export function InvoiceQueue() {
       {/* Upload dropzone FIRST — primary action on this page */}
       <UploadDropzone />
 
-      {/* Filter chips row with Mine toggle on the right */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-1 flex-wrap">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilterKey(f.key)}
-              className={cn(
-                "px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors",
-                "border",
-                filterKey === f.key
-                  ? "bg-navy text-stone border-navy"
-                  : "bg-white text-slate-600 border-slate-300 hover:border-navy",
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Mine-only toggle pill */}
+      {/* Filter row: horizontally scrolling chips on mobile + Mine toggle and
+          search alongside on desktop. On mobile the search wraps to its own
+          row so it stays readable. */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex-1 min-w-0">
+            <FilterChips
+              chips={FILTERS.map((f) => ({ key: f.key, label: f.label }))}
+              active={filterKey}
+              onChange={setFilterKey}
+            />
+          </div>
           <button
             type="button"
             onClick={() => setMineOnly((v) => !v)}
@@ -88,7 +88,7 @@ export function InvoiceQueue() {
             title={mySub ? "Only show invoices assigned to you" : "Sign in to enable"}
             aria-pressed={mineOnly}
             className={cn(
-              "inline-flex items-center gap-2 px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors border",
+              "flex-shrink-0 inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors border",
               mineOnly
                 ? "bg-amber text-navy border-amber"
                 : "bg-white text-slate-600 border-slate-300 hover:border-amber",
@@ -96,21 +96,21 @@ export function InvoiceQueue() {
             )}
           >
             <UserCircleIcon className="h-4 w-4" />
-            Mine only
+            <span className="hidden sm:inline">Mine only</span>
+            <span className="sm:hidden">Mine</span>
           </button>
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search vendor, invoice #, PO…"
-            className={cn(
-              "px-3 py-1.5 text-sm bg-white border border-slate-300",
-              "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
-              "w-full sm:w-56",
-            )}
-            aria-label="Search invoices"
-          />
         </div>
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search vendor, invoice #, PO…"
+          className={cn(
+            "block w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-sm bg-white border border-slate-300",
+            "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
+          )}
+          aria-label="Search invoices"
+        />
       </div>
 
       {/* Results */}
@@ -191,40 +191,48 @@ function EmptyState({
   filterKey: string;
   mineOnly: boolean;
 }) {
-  const copy: Record<string, { title: string; body: string }> = {
+  const copy: Record<
+    string,
+    {
+      title: string;
+      body: string;
+      Icon: typeof InboxIcon;
+    }
+  > = {
     needs_review: {
       title: "Inbox is clear",
       body: "Nothing waiting on review. Upload a PDF above, or forward one to your Postmark address.",
+      Icon: InboxIcon,
     },
     pending: {
       title: "No parked invoices",
       body: "Invoices you Send to Pending will land here.",
+      Icon: ClockIcon,
     },
     approved: {
-      title: "No approved invoices awaiting post",
+      title: "Nothing waiting to post",
       body: "Approve without posting to sit them here until you're ready.",
+      Icon: CheckCircleIcon,
     },
     posted: {
       title: "Nothing posted yet",
       body: "Once you post invoices to QuickBooks they'll show up here.",
+      Icon: PaperAirplaneIcon,
     },
     archive: {
       title: "Archive is empty",
       body: "Rejected invoices are kept here for the audit trail.",
+      Icon: ArchiveBoxIcon,
     },
   };
   const base = copy[filterKey] ?? {
     title: "Nothing here",
     body: "Try a different filter.",
+    Icon: InboxIcon,
   };
   const title = mineOnly ? "Nothing assigned to you" : base.title;
   const body = mineOnly
     ? "Turn off Mine only to see the full team's work."
     : base.body;
-  return (
-    <div className="px-6 py-14 text-center">
-      <p className="font-display text-lg text-navy">{title}</p>
-      <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">{body}</p>
-    </div>
-  );
+  return <UiEmptyState Icon={base.Icon} title={title} body={body} />;
 }

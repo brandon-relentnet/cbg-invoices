@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowPathIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, BuildingOffice2Icon } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useVendors } from "@/lib/invoices";
 import { useQboStatus, useSyncVendors } from "@/lib/qbo";
 import { formatRelative } from "@/lib/format";
@@ -65,13 +66,29 @@ function VendorsPage() {
         <p className="text-sm text-red-700">Failed to load vendors: {(error as Error).message}</p>
       )}
       {!isLoading && !error && vendors.length === 0 && (
-        <div className="bg-white p-8 text-center border-t-4 border-amber">
-          <p className="text-sm text-slate-600">
-            No vendors yet.{" "}
-            {qbo.data?.connected
-              ? "Click Sync to pull from QuickBooks."
-              : "Connect QuickBooks on the Settings page first."}
-          </p>
+        <div className="bg-white border-t-4 border-amber">
+          <EmptyState
+            Icon={BuildingOffice2Icon}
+            title="No vendors synced yet"
+            body={
+              qbo.data?.connected
+                ? "Tap Sync to pull every active vendor from QuickBooks. Takes a few seconds."
+                : "Connect QuickBooks on the Settings page first."
+            }
+            cta={
+              qbo.data?.connected ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => sync.mutate()}
+                  loading={sync.isPending}
+                >
+                  <ArrowPathIcon className="h-4 w-4" />
+                  Sync from QuickBooks
+                </Button>
+              ) : undefined
+            }
+          />
         </div>
       )}
       {vendors.length > 0 && (

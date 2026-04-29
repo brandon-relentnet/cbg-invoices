@@ -16,6 +16,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useMobileAppBar } from "@/components/layout/MobileAppBar";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { SplitButton, type SplitButtonOption } from "@/components/ui/SplitButton";
 import { StatusBadge } from "@/components/invoices/StatusBadge";
@@ -467,53 +468,38 @@ function InvoiceDetailPage() {
       )}
 
       {/* Reject modal */}
-      <AnimatePresence>
-        {showRejectModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-graphite/60 flex items-center justify-center z-50 p-4"
-            onClick={() => setShowRejectModal(false)}
+      <BottomSheet
+        open={showRejectModal}
+        onClose={() => setShowRejectModal(false)}
+        ariaLabel="Reject invoice"
+      >
+        <div className="p-6">
+          <h2 className="font-display text-2xl text-navy">Reject invoice</h2>
+          <p className="text-sm text-slate-600 mt-1">
+            Provide a reason. This is saved to the audit log.
+          </p>
+          <textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            rows={4}
+            placeholder="e.g. Duplicate of invoice #INV-2025-12"
+            className="mt-4 block w-full p-3 border border-slate-300 bg-stone/50 text-base md:text-sm focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
+          />
+        </div>
+        <div className="px-6 py-4 bg-stone/50 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-stone">
+          <Button variant="ghost" onClick={() => setShowRejectModal(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleReject}
+            disabled={!rejectReason.trim()}
+            loading={reject.isPending}
           >
-            <motion.div
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 20, opacity: 0 }}
-              className="bg-white w-full max-w-md border-t-4 border-amber max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-6">
-                <h2 className="font-display text-2xl text-navy">Reject invoice</h2>
-                <p className="text-sm text-slate-600 mt-1">
-                  Provide a reason. This is saved to the audit log.
-                </p>
-                <textarea
-                  autoFocus
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  rows={4}
-                  placeholder="e.g. Duplicate of invoice #INV-2025-12"
-                  className="mt-4 block w-full p-3 border border-slate-300 bg-stone/50 text-sm focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
-                />
-              </div>
-              <div className="px-6 py-4 bg-stone/50 flex items-center justify-end gap-2 border-t border-stone">
-                <Button variant="ghost" onClick={() => setShowRejectModal(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={handleReject}
-                  disabled={!rejectReason.trim()}
-                  loading={reject.isPending}
-                >
-                  Reject
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            Reject
+          </Button>
+        </div>
+      </BottomSheet>
 
       {/* Assignee picker (shared for all assign flows) */}
       <AssigneePicker

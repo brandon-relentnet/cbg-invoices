@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowPathIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, FolderIcon } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useProjects } from "@/lib/invoices";
 import { useQboStatus, useSyncProjects } from "@/lib/qbo";
 import { formatRelative } from "@/lib/format";
@@ -68,13 +69,29 @@ function ProjectsPage() {
         </p>
       )}
       {!isLoading && !error && projects.length === 0 && (
-        <div className="bg-white p-8 text-center border-t-4 border-amber">
-          <p className="text-sm text-slate-600">
-            No projects yet.{" "}
-            {qbo.data?.connected
-              ? "Click Sync to pull from QuickBooks."
-              : "Connect QuickBooks on the Settings page first."}
-          </p>
+        <div className="bg-white border-t-4 border-amber">
+          <EmptyState
+            Icon={FolderIcon}
+            title="No projects synced yet"
+            body={
+              qbo.data?.connected
+                ? `Tap Sync to pull every active QuickBooks ${source.toLowerCase()}.`
+                : "Connect QuickBooks on the Settings page first."
+            }
+            cta={
+              qbo.data?.connected ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => sync.mutate()}
+                  loading={sync.isPending}
+                >
+                  <ArrowPathIcon className="h-4 w-4" />
+                  Sync from QuickBooks
+                </Button>
+              ) : undefined
+            }
+          />
         </div>
       )}
       {projects.length > 0 && (

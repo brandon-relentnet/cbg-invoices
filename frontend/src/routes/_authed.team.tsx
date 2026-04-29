@@ -23,7 +23,9 @@ import {
 } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useMobileAppBar } from "@/components/layout/MobileAppBar";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import {
@@ -193,9 +195,27 @@ function TeamPage() {
           </div>
         )}
         {!isLoading && !error && (data?.users.length ?? 0) === 0 && (
-          <div className="px-6 py-14 text-center">
-            <p className="font-display text-lg text-navy">No team members yet.</p>
-          </div>
+          <EmptyState
+            Icon={UsersIcon}
+            title="No team members yet"
+            body={
+              canManage
+                ? "You're the first one in. Invite teammates and they'll get a magic-link sign-in."
+                : "An admin will need to invite teammates."
+            }
+            cta={
+              canManage ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setInviteOpen(true)}
+                >
+                  <UserPlusIcon className="h-4 w-4" />
+                  Invite member
+                </Button>
+              ) : undefined
+            }
+          />
         )}
         {!isLoading && !error && (data?.users.length ?? 0) > 0 && (
           <div className="overflow-x-auto">
@@ -585,75 +605,57 @@ function InviteModal({
   }
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-graphite/60 flex items-center justify-center z-50 p-4"
-          onClick={handleClose}
-        >
-          <motion.form
-            onSubmit={handleSubmit}
-            initial={{ y: 16, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 16, opacity: 0 }}
-            className="bg-white w-full max-w-md border-t-4 border-amber max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
+    <BottomSheet open={open} onClose={handleClose} ariaLabel="Invite member">
+      <form onSubmit={handleSubmit}>
+        <header className="p-5 flex items-start justify-between border-b border-stone/60">
+          <div className="min-w-0">
+            <h2 className="font-display text-xl text-navy">Invite member</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              We'll email them a one-click sign-in link valid for 7 days. They
+              start as a Member — promote them later if needed.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="p-2 -mr-2 text-slate-500 hover:text-graphite flex-shrink-0"
+            aria-label="Close"
           >
-            <header className="p-5 flex items-start justify-between border-b border-stone/60">
-              <div>
-                <h2 className="font-display text-xl text-navy">Invite member</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  We'll email them a one-click sign-in link valid for 7 days. They
-                  start as a Member — promote them later if needed.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleClose}
-                className="p-1 text-slate-500 hover:text-graphite"
-                aria-label="Close"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </header>
-            <div className="p-5 space-y-4">
-              <Input
-                label="Email"
-                type="email"
-                required
-                autoFocus
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="teammate@cambridgebg.com"
-              />
-              <Input
-                label="Name (optional)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Alex Smith"
-              />
-              {error && (
-                <p className="text-sm text-red-700 bg-red-50 border-l-2 border-red-700 px-3 py-2">
-                  {error.message}
-                </p>
-              )}
-            </div>
-            <footer className="px-5 py-4 bg-stone/40 border-t border-stone/60 flex items-center justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={handleClose}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" loading={loading}>
-                <PlusIcon className="h-4 w-4" />
-                Send invite
-              </Button>
-            </footer>
-          </motion.form>
-        </motion.div>
-      )}
-    </AnimatePresence>
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="p-5 space-y-4">
+          <Input
+            label="Email"
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="teammate@cambridgebg.com"
+          />
+          <Input
+            label="Name (optional)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Alex Smith"
+          />
+          {error && (
+            <p className="text-sm text-red-700 bg-red-50 border-l-2 border-red-700 px-3 py-2">
+              {error.message}
+            </p>
+          )}
+        </div>
+        <footer className="px-5 py-4 bg-stone/40 border-t border-stone/60 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={handleClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={loading}>
+            <PlusIcon className="h-4 w-4" />
+            Send invite
+          </Button>
+        </footer>
+      </form>
+    </BottomSheet>
   );
 }
 
@@ -740,41 +742,31 @@ function RemoveModal({
   onConfirm: () => void;
 }) {
   return (
-    <AnimatePresence>
-      {open && member && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-graphite/60 flex items-center justify-center z-50 p-4"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ y: 16, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 16, opacity: 0 }}
-            className="bg-white w-full max-w-md border-t-4 border-red-700 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-5">
-              <h2 className="font-display text-xl text-navy">Remove team member?</h2>
-              <p className="text-sm text-slate-600 mt-2">
-                <span className="font-semibold">{memberLabel(member)}</span> will lose
-                access to the invoice portal immediately. Any invoices they were
-                assigned to remain in the system.
-              </p>
-            </div>
-            <footer className="px-5 py-4 bg-stone/40 border-t border-stone/60 flex items-center justify-end gap-2">
-              <Button variant="ghost" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={onConfirm} loading={loading}>
-                Remove
-              </Button>
-            </footer>
-          </motion.div>
-        </motion.div>
+    <BottomSheet open={open && !!member} onClose={onClose} ariaLabel="Remove team member">
+      {member && (
+        <>
+          <div className="p-5">
+            <h2 className="font-display text-xl text-navy">Remove team member?</h2>
+            <p className="text-sm text-slate-600 mt-2">
+              <span className="font-semibold">{memberLabel(member)}</span> will
+              lose access to the invoice portal immediately. Any invoices they
+              were assigned to remain in the system.
+            </p>
+          </div>
+          <footer className="px-5 py-4 bg-stone/40 border-t border-stone/60 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onConfirm}
+              loading={loading}
+            >
+              Remove
+            </Button>
+          </footer>
+        </>
       )}
-    </AnimatePresence>
+    </BottomSheet>
   );
 }
