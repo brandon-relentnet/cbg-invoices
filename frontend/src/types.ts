@@ -43,6 +43,12 @@ export interface Invoice {
   notes: string | null;
   line_items: LineItem[];
   project_id: string | null;
+
+  // Cambridge AP coding markup (added by AP team to the PDF)
+  job_number: string | null;
+  cost_code: string | null;
+  coding_date: string | null;
+  approver: string | null;
   reviewed_by: string | null;
   reviewed_by_email: string | null;
   reviewed_at: string | null;

@@ -49,6 +49,30 @@ export function InvoiceSummary({ invoice, vendors, projects }: Props) {
         </div>
       </div>
 
+      {/* Cambridge AP coding markup — only show when at least one field
+          is populated. Hidden completely on un-coded invoices. */}
+      {(invoice.job_number ||
+        invoice.cost_code ||
+        invoice.coding_date ||
+        invoice.approver) && (
+        <DetailCard title="Cambridge coding">
+          <DataRow label="Job no.">
+            <span className="font-mono">{invoice.job_number || "—"}</span>
+          </DataRow>
+          <DataRow label="Cost code">
+            <span className="font-mono">{invoice.cost_code || "—"}</span>
+          </DataRow>
+          <DataRow label="Coding date">
+            {formatDate(invoice.coding_date)}
+          </DataRow>
+          <DataRow label="Approver (per PDF)">
+            <span className="font-mono uppercase tracking-wider">
+              {invoice.approver || "—"}
+            </span>
+          </DataRow>
+        </DetailCard>
+      )}
+
       <DetailCard title="Details">
         <DataRow label="Vendor">
           {vendor?.display_name || invoice.vendor_name || "—"}

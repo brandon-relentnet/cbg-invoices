@@ -45,6 +45,7 @@ async def list_invoices(
     session: Annotated[AsyncSession, Depends(get_session)],
     status_filter: Annotated[list[InvoiceStatus] | None, Query(alias="status")] = None,
     q: str | None = None,
+    job: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
@@ -61,9 +62,17 @@ async def list_invoices(
             func.lower(Invoice.invoice_number).like(like),
             func.lower(Invoice.po_number).like(like),
             func.lower(Invoice.sender_email).like(like),
+            func.lower(Invoice.job_number).like(like),
         )
         stmt = stmt.where(cond)
         count_stmt = count_stmt.where(cond)
+    if job:
+        # Dedicated job-number filter — case-insensitive substring match.
+        # Useful for the "all invoices for job 25-11-04" use case.
+        job_like = f"%{job.lower()}%"
+        job_cond = func.lower(Invoice.job_number).like(job_like)
+        stmt = stmt.where(job_cond)
+        count_stmt = count_stmt.where(job_cond)
 
     total = (await session.execute(count_stmt)).scalar_one()
     stmt = (
@@ -617,4 +626,9 @@ def _snapshot(invoice: Invoice) -> dict:
         "notes": invoice.notes,
         "line_items": invoice.line_items,
         "project_id": str(invoice.project_id) if invoice.project_id else None,
+        # Cambridge AP coding markup
+        "job_number": invoice.job_number,
+        "cost_code": invoice.cost_code,
+        "coding_date": invoice.coding_date.isoformat() if invoice.coding_date else None,
+        "approver": invoice.approver,
     }

@@ -29,6 +29,11 @@ interface FormState {
   currency: string;
   notes: string;
   line_items: LineItemDraft[];
+  // Cambridge AP coding markup
+  job_number: string;
+  cost_code: string;
+  coding_date: string;
+  approver: string;
 }
 
 interface LineItemDraft {
@@ -58,6 +63,10 @@ function fromInvoice(inv: Invoice): FormState {
       unit_price: formatDollarsInput(li.unit_price_cents),
       amount: formatDollarsInput(li.amount_cents),
     })),
+    job_number: inv.job_number ?? "",
+    cost_code: inv.cost_code ?? "",
+    coding_date: inv.coding_date ?? "",
+    approver: inv.approver ?? "",
   };
 }
 
@@ -84,6 +93,10 @@ function toPatch(s: FormState): InvoicePatchPayload {
     currency: s.currency || "USD",
     notes: s.notes || null,
     line_items,
+    job_number: s.job_number || null,
+    cost_code: s.cost_code || null,
+    coding_date: s.coding_date || null,
+    approver: s.approver || null,
   };
 }
 
@@ -192,6 +205,46 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
       </div>
 
       <fieldset disabled={disabled} className="space-y-4">
+        {/* ---------- Cambridge AP coding markup ----------
+            Highest priority section — these fields drive the project +
+            cost-code allocation in QBO and live audit. Sometimes auto-
+            extracted from the PDF markup, sometimes typed manually. */}
+        <FormSection title="Cambridge coding">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Input
+              label="Job no."
+              labelTone="quiet"
+              value={form.job_number}
+              onChange={(e) => update("job_number", e.target.value)}
+              placeholder="e.g. 25-11-04"
+              className="font-mono"
+            />
+            <Input
+              label="Cost code"
+              labelTone="quiet"
+              value={form.cost_code}
+              onChange={(e) => update("cost_code", e.target.value)}
+              placeholder='e.g. 01-520 "O"'
+              className="font-mono"
+            />
+            <Input
+              label="Coding date"
+              labelTone="quiet"
+              type="date"
+              value={form.coding_date}
+              onChange={(e) => update("coding_date", e.target.value)}
+            />
+            <Input
+              label="Approver"
+              labelTone="quiet"
+              value={form.approver}
+              onChange={(e) => update("approver", e.target.value)}
+              placeholder="e.g. jwh"
+              className="font-mono uppercase"
+            />
+          </div>
+        </FormSection>
+
         {/* ---------- Assignment (Vendor + Project) ---------- */}
         <FormSection title="Assignment">
           <Select

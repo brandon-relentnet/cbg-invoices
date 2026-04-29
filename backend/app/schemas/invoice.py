@@ -38,6 +38,13 @@ class ExtractedFields(BaseModel):
     notes: str | None = None
     confidence: Literal["high", "medium", "low"] = "medium"
 
+    # Cambridge AP coding (markup added by AP team to the PDF — typed,
+    # stamped, or handwritten in a corner box)
+    job_number: str | None = None
+    cost_code: str | None = None
+    coding_date: date | None = None
+    approver: str | None = None
+
 
 class _InvoiceBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -67,6 +74,12 @@ class _InvoiceBase(BaseModel):
     po_number: str | None = None
     notes: str | None = None
     line_items: list[LineItem] = Field(default_factory=list)
+
+    # Cambridge AP coding markup
+    job_number: str | None = None
+    cost_code: str | None = None
+    coding_date: date | None = None
+    approver: str | None = None
 
     project_id: UUID | None = None
 
@@ -118,6 +131,12 @@ class InvoicePatch(BaseModel):
     notes: str | None = None
     line_items: list[LineItem] | None = None
     project_id: UUID | None = None
+
+    # Cambridge AP coding markup
+    job_number: str | None = None
+    cost_code: str | None = None
+    coding_date: date | None = None
+    approver: str | None = None
 
 
 class RejectInvoiceRequest(BaseModel):

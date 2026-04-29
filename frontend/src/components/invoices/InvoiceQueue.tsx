@@ -43,6 +43,7 @@ export function InvoiceQueue() {
   const user = useUser();
   const [filterKey, setFilterKey] = useState<string>("needs_review");
   const [q, setQ] = useState("");
+  const [job, setJob] = useState("");
   const [mineOnly, setMineOnly] = useState(false);
   const mySub = user?.id ?? null;
 
@@ -51,6 +52,7 @@ export function InvoiceQueue() {
   const { data, isLoading, error } = useInvoices({
     status: filter.status,
     q: q || undefined,
+    job: job || undefined,
     page_size: 100,
   });
 
@@ -100,17 +102,30 @@ export function InvoiceQueue() {
             <span className="sm:hidden">Mine</span>
           </button>
         </div>
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search vendor, invoice #, PO…"
-          className={cn(
-            "block w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-sm bg-white border border-slate-300",
-            "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
-          )}
-          aria-label="Search invoices"
-        />
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search vendor, invoice #, PO…"
+            className={cn(
+              "block w-full sm:flex-1 min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-sm bg-white border border-slate-300",
+              "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
+            )}
+            aria-label="Search invoices"
+          />
+          <input
+            type="search"
+            value={job}
+            onChange={(e) => setJob(e.target.value)}
+            placeholder="Job #"
+            className={cn(
+              "block w-full sm:w-32 min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-sm font-mono bg-white border border-slate-300",
+              "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
+            )}
+            aria-label="Filter by job number"
+          />
+        </div>
       </div>
 
       {/* Results */}
@@ -139,6 +154,7 @@ export function InvoiceQueue() {
                 <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
                   <th className="px-4 py-3 text-left">Received</th>
                   <th className="px-4 py-3 text-left">Vendor</th>
+                  <th className="px-4 py-3 text-left">Job</th>
                   <th className="px-4 py-3 text-left">Invoice #</th>
                   <th className="px-4 py-3 text-right">Amount</th>
                   <th className="px-4 py-3 text-left">Assignee</th>

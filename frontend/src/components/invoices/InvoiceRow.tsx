@@ -32,10 +32,22 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
             <span className="text-slate-400 italic">Unknown</span>
           )}
         </div>
-        {invoice.sender_email && (
-          <div className="text-xs text-slate-500 truncate max-w-[20ch]">
-            {invoice.sender_email}
-          </div>
+        <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+          {invoice.approver && (
+            <span className="font-mono uppercase tracking-wider text-amber">
+              {invoice.approver}
+            </span>
+          )}
+          {invoice.sender_email && (
+            <span className="truncate max-w-[18ch]">{invoice.sender_email}</span>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-sm font-mono text-graphite">
+        {invoice.job_number ? (
+          <span className="text-navy font-semibold">{invoice.job_number}</span>
+        ) : (
+          <span className="text-slate-300">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-sm font-mono text-graphite">
@@ -201,11 +213,23 @@ export function InvoiceCard({ invoice }: { invoice: Invoice }) {
                 <span className="text-slate-400 italic">Unknown vendor</span>
               )}
             </div>
-            {invoice.invoice_number && (
-              <div className="font-mono text-xs text-graphite mt-0.5">
-                #{invoice.invoice_number}
-              </div>
-            )}
+            <div className="flex items-center gap-2 mt-0.5 text-xs text-graphite">
+              {invoice.job_number && (
+                <span className="font-mono font-semibold text-navy">
+                  Job {invoice.job_number}
+                </span>
+              )}
+              {invoice.approver && (
+                <span className="font-mono uppercase tracking-wider text-amber">
+                  {invoice.approver}
+                </span>
+              )}
+              {invoice.invoice_number && (
+                <span className="font-mono text-graphite/70">
+                  #{invoice.invoice_number}
+                </span>
+              )}
+            </div>
           </div>
           <div className="text-right flex-shrink-0">
             <div className="font-semibold text-navy tabular-nums">

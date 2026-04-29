@@ -101,6 +101,14 @@ class Invoice(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     line_items: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
 
+    # Cambridge AP coding markup (typically written/stamped on the PDF by AP
+    # before posting). All optional — extraction may miss them, PMs fill in
+    # via the review form.
+    job_number: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    cost_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    coding_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    approver: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     # Project assignment
     project_id: Mapped[UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True

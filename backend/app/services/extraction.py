@@ -115,6 +115,11 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
     invoice.currency = fields.currency or "USD"
     invoice.notes = fields.notes
     invoice.line_items = [li.model_dump() for li in fields.line_items]
+    # Cambridge AP coding markup (may all be null for un-coded invoices)
+    invoice.job_number = fields.job_number
+    invoice.cost_code = fields.cost_code
+    invoice.coding_date = fields.coding_date
+    invoice.approver = fields.approver
     invoice.status = InvoiceStatus.READY_FOR_REVIEW
 
     await audit.record_system(
@@ -126,6 +131,9 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
             "invoice_number": fields.invoice_number,
             "total_cents": fields.total_cents,
             "line_items": len(fields.line_items),
+            "job_number": fields.job_number,
+            "cost_code": fields.cost_code,
+            "approver": fields.approver,
             "confidence": fields.confidence,
         },
         message=f"confidence={fields.confidence}",

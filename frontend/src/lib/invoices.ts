@@ -16,6 +16,8 @@ import type {
 export interface ListParams {
   status?: InvoiceStatus[];
   q?: string;
+  /** Filter by Cambridge job number (case-insensitive substring match). */
+  job?: string;
   page?: number;
   page_size?: number;
 }
@@ -26,6 +28,7 @@ function toQuery(params: ListParams): string {
     for (const s of params.status) sp.append("status", s);
   }
   if (params.q) sp.set("q", params.q);
+  if (params.job) sp.set("job", params.job);
   if (params.page) sp.set("page", String(params.page));
   if (params.page_size) sp.set("page_size", String(params.page_size));
   return sp.toString();
@@ -100,6 +103,11 @@ export interface InvoicePatchPayload {
   notes?: string | null;
   line_items?: LineItem[];
   project_id?: string | null;
+  // Cambridge AP coding markup
+  job_number?: string | null;
+  cost_code?: string | null;
+  coding_date?: string | null;
+  approver?: string | null;
 }
 
 export function usePatchInvoice(id: string) {
