@@ -48,13 +48,16 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        // Below md: fixed-position slide-out drawer with translate transition.
-        // md+: normal in-flow column with no transition shenanigans.
-        "fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw]",
-        "md:relative md:inset-auto md:z-auto md:w-60 md:max-w-none",
-        "flex-shrink-0 bg-graphite bg-grid bg-noise text-stone overflow-hidden",
-        "transition-transform duration-200 ease-out md:transition-none",
-        drawerOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        // Below md: only render when drawerOpen=true, as a fixed-position
+        // overlay drawer above the page. When closed it's `display: none` so
+        // it can't push the main flex layout — the previous translate-only
+        // approach had the sidebar still consuming space in some browsers.
+        drawerOpen
+          ? "fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] flex"
+          : "hidden",
+        // md+: always in-flow normal column.
+        "md:relative md:inset-auto md:z-auto md:flex md:w-60 md:max-w-none md:flex-shrink-0",
+        "bg-graphite bg-grid bg-noise text-stone overflow-hidden",
       )}
       aria-label="Primary navigation"
     >
