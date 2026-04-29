@@ -1,33 +1,34 @@
 import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
-type Tone =
-  | "slate"
-  | "blue"
-  | "amber"
-  | "green"
-  | "red"
-  | "navy";
+type Tone = "slate" | "blue" | "amber" | "green" | "red" | "navy";
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
   children: ReactNode;
-  /** Show a leading amber dot — useful to distinguish same-tone statuses. */
+  /** Show a leading status dot. Defaults amber unless `dotColor` overrides. */
   dot?: boolean;
+  /** Hex/CSS color for the dot when `dot` is true. */
+  dotColor?: string;
+  /** Pulse the dot — useful for in-flight states like Extracting. */
+  pulseDot?: boolean;
 }
 
 const toneClasses: Record<Tone, string> = {
-  slate: "bg-slate-200 text-slate-800 border border-slate-300",
-  blue: "bg-blue-100 text-blue-900 border border-blue-300",
-  amber: "bg-amber/20 text-navy border border-amber",
-  green: "bg-green-100 text-green-900 border border-green-400",
-  red: "bg-red-100 text-red-900 border border-red-400",
+  // Bumped contrast on borders + text so badges read clearly on stone bg
+  slate: "bg-slate-100 text-slate-900 border border-slate-400",
+  blue: "bg-blue-50 text-blue-900 border border-blue-400",
+  amber: "bg-amber/15 text-navy border border-amber",
+  green: "bg-green-50 text-green-900 border border-green-500",
+  red: "bg-red-50 text-red-900 border border-red-500",
   navy: "bg-navy text-stone border border-amber",
 };
 
 export function Badge({
   tone = "slate",
   dot = false,
+  dotColor,
+  pulseDot = false,
   className,
   children,
   ...props
@@ -44,8 +45,23 @@ export function Badge({
       {dot && (
         <span
           aria-hidden
-          className="inline-block h-1.5 w-1.5 rounded-full bg-amber"
-        />
+          className={cn(
+            "relative inline-block h-1.5 w-1.5 rounded-full flex-shrink-0",
+            !dotColor && "bg-amber",
+          )}
+          style={dotColor ? { backgroundColor: dotColor } : undefined}
+        >
+          {pulseDot && (
+            <span
+              aria-hidden
+              className="absolute inset-0 rounded-full animate-ping"
+              style={{
+                backgroundColor: dotColor ?? "#c8923c",
+                opacity: 0.5,
+              }}
+            />
+          )}
+        </span>
       )}
       {children}
     </span>

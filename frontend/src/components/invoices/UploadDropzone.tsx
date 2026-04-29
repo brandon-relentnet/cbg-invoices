@@ -45,9 +45,19 @@ export function UploadDropzone() {
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
+        onClick={() => fileInput.current?.click()}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            fileInput.current?.click();
+          }
+        }}
         className={cn(
-          "relative border-2 border-dashed p-6 text-center transition-colors",
-          dragOver ? "border-amber bg-amber/5" : "border-slate-300 bg-white",
+          "relative border-2 border-dashed p-5 sm:p-6 text-center transition-colors cursor-pointer",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2",
+          dragOver ? "border-amber bg-amber/5" : "border-slate-300 bg-white hover:border-amber/60",
         )}
       >
         <input
@@ -58,22 +68,34 @@ export function UploadDropzone() {
           onChange={onChange}
           multiple
         />
-        <DocumentArrowUpIcon className="mx-auto h-9 w-9 text-slate-400" aria-hidden />
-        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
-          <p className="text-sm text-graphite">
-            <span className="font-semibold text-navy">Drop a PDF here</span> or
+        <DocumentArrowUpIcon
+          className="mx-auto h-10 w-10 sm:h-9 sm:w-9 text-amber/70"
+          aria-hidden
+        />
+        <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-center gap-2">
+          <p className="text-sm sm:text-base text-graphite">
+            <span className="font-semibold text-navy hidden sm:inline">
+              Drop a PDF here
+            </span>
+            <span className="font-semibold text-navy sm:hidden">Tap to upload</span>{" "}
+            <span className="hidden sm:inline">or</span>
           </p>
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => fileInput.current?.click()}
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInput.current?.click();
+            }}
             loading={hasActive}
+            className="hidden sm:inline-flex"
           >
             Choose file
           </Button>
         </div>
-        <p className="mt-2 text-xs text-slate-500">
-          We'll extract the fields automatically. You'll review before posting to QBO.
+        <p className="mt-2 text-xs text-slate-500 max-w-xs mx-auto">
+          We'll extract the fields automatically. You'll review before posting
+          to QBO.
         </p>
       </div>
 

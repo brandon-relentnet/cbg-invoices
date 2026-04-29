@@ -814,51 +814,125 @@ function ActionFooter(props: FooterProps) {
   // footer instead — "Save and re-approve" etc.
   const isReapproving = forceEdit && invoice.status === "approved";
 
+  // Inject Reject + Save draft + Cancel into the SplitButton dropdown so on
+  // mobile a single full-width primary button is the only main control.
+  // Desktop still surfaces them inline.
+  const mobileExtraOptions: SplitButtonOption[] = [];
+  if (showEditor) {
+    mobileExtraOptions.push({
+      label: dirty ? "Save draft" : "Saved",
+      description: dirty
+        ? "Persist edits without changing status"
+        : "All changes already saved",
+      onSelect: onSave,
+      disabled: !dirty || patchPending,
+      icon: <PencilSquareIcon className="h-4 w-4" />,
+    });
+  }
+  if (rejectVisible) {
+    mobileExtraOptions.push({
+      label: "Reject",
+      description: "Mark as rejected — captured in the audit log",
+      onSelect: onReject,
+      icon: <XCircleIcon className="h-4 w-4" />,
+    });
+  }
+  if (isReapproving) {
+    mobileExtraOptions.push({
+      label: "Cancel edits",
+      description: "Discard changes and return to read-only",
+      onSelect: onCancelEdit,
+      icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
+    });
+  }
+  const mobileOptions: SplitButtonOption[] =
+    mobileExtraOptions.length === 0
+      ? options
+      : [
+          ...options,
+          { divider: true, label: "", onSelect: () => {} },
+          ...mobileExtraOptions,
+        ];
+
   return (
-    <div className="sticky bottom-0 mt-6 md:mt-8 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 py-3 md:py-4 bg-stone border-t-2 border-navy flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 z-20">
-      <div className="flex items-center gap-3 text-xs text-slate-600">
-        {showEditor ? (
-          dirty ? (
-            <span>
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber align-middle mr-2" />
-              Unsaved edits
-            </span>
+    <div className="sticky bottom-0 mt-6 md:mt-8 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 py-3 md:py-4 bg-stone border-t-2 border-navy z-20">
+      {/* Status indicator */}
+      <div className="text-xs text-slate-600 mb-2 sm:mb-0 sm:flex sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex items-center gap-2">
+          {showEditor ? (
+            dirty ? (
+              <>
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber" />
+                <span>Unsaved edits</span>
+              </>
+            ) : (
+              <span>All changes saved.</span>
+            )
           ) : (
-            "All changes saved."
-          )
-        ) : (
-          "Status: " + invoice.status.replace(/_/g, " ")
-        )}
+            <span>
+              Status:{" "}
+              <span className="text-graphite font-medium">
+                {invoice.status.replace(/_/g, " ")}
+              </span>
+            </span>
+          )}
+        </div>
+
+        {/* Desktop button row — appears inline at sm+; mobile gets a single
+            full-width SplitButton below. */}
+        <div className="hidden sm:flex items-center gap-2 flex-wrap sm:flex-nowrap">
+          {isReapproving && (
+            <Button variant="ghost" onClick={onCancelEdit}>
+              Cancel
+            </Button>
+          )}
+          {rejectVisible && (
+            <Button
+              variant="destructive"
+              onClick={onReject}
+              title="Reject (⌘+Shift+R)"
+            >
+              Reject
+            </Button>
+          )}
+          {showEditor && (
+            <Button
+              variant="secondary"
+              onClick={onSave}
+              disabled={!dirty}
+              loading={patchPending}
+            >
+              Save draft
+            </Button>
+          )}
+          <SplitButton
+            primaryLabel={
+              postingInFlight && primary.label === "Post to QBO"
+                ? "Posting to QBO…"
+                : primary.label
+            }
+            onPrimary={primary.onClick}
+            options={options}
+            variant="primary"
+            disabled={primary.disabled || busy || postingInFlight}
+            title={primary.disabled ? primary.disabledReason : undefined}
+            loading={(busy && !patchPending) || postingInFlight}
+          />
+        </div>
       </div>
-      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-        {isReapproving && (
-          <Button variant="ghost" onClick={onCancelEdit}>
-            Cancel
-          </Button>
-        )}
-        {rejectVisible && (
-          <Button variant="destructive" onClick={onReject} title="Reject (⌘+Shift+R)">
-            Reject
-          </Button>
-        )}
-        {showEditor && (
-          <Button
-            variant="secondary"
-            onClick={onSave}
-            disabled={!dirty}
-            loading={patchPending}
-          >
-            Save draft
-          </Button>
-        )}
+
+      {/* Mobile: a single full-width SplitButton with secondary actions
+          folded into the dropdown. */}
+      <div className="sm:hidden">
         <SplitButton
+          className="w-full"
           primaryLabel={
             postingInFlight && primary.label === "Post to QBO"
               ? "Posting to QBO…"
               : primary.label
           }
           onPrimary={primary.onClick}
-          options={options}
+          options={mobileOptions}
           variant="primary"
           disabled={primary.disabled || busy || postingInFlight}
           title={primary.disabled ? primary.disabledReason : undefined}

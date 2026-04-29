@@ -90,8 +90,8 @@ export function SplitButton({
         disabled={disabled || loading}
         title={title}
         className={cn(
-          "inline-flex items-center justify-center gap-2",
-          "px-4 py-2 text-sm",
+          "flex-1 sm:flex-initial inline-flex items-center justify-center gap-2",
+          "min-h-[44px] md:min-h-0 px-4 py-2 text-sm",
           "transition-all duration-150",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2",
           v.main,
@@ -113,7 +113,7 @@ export function SplitButton({
         aria-expanded={open}
         aria-label="More actions"
         className={cn(
-          "px-2 py-2",
+          "min-h-[44px] md:min-h-0 px-3 sm:px-2 py-2",
           "transition-all duration-150",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2",
           v.chevron,
