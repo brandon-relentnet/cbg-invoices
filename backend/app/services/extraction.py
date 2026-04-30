@@ -21,6 +21,7 @@ import re
 from typing import Any
 from uuid import UUID
 
+import pypdf
 from anthropic import AsyncAnthropic
 from pdf2image import convert_from_bytes
 from PIL import Image
@@ -38,7 +39,14 @@ from app.services import audit, storage
 
 log = logging.getLogger(__name__)
 
-MAX_PAGES = 4
+# How many pages we send to Claude per invoice. Most vendor invoices are
+# 1–8 pages. When a PDF is longer we fall back to a "front + trailer"
+# sampling strategy because the totals (subtotal / tax / freight / grand
+# total) almost always live on the last page or two.
+MAX_PAGES = 8
+# When the source document has more than MAX_PAGES, this is how many
+# pages we always include from the trailing end so we don't miss totals.
+TRAILER_PAGES = 2
 TARGET_WIDTH_PX = 2048
 MAX_TOKENS = 4096
 # Cap simultaneous extractions to keep memory pressure predictable. Each
@@ -142,21 +150,69 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
     log.info("Extracted invoice %s (vendor=%s, total=%s)", invoice_id, fields.vendor_name, fields.total_cents)
 
 
-def _render_pages(pdf_bytes: bytes) -> list[bytes]:
-    """Render up to MAX_PAGES pages at TARGET_WIDTH_PX wide, returning PNG bytes.
+def _select_pages(total_pages: int) -> list[int]:
+    """Pick which pages to render and ship to Claude.
 
-    Runs in a worker thread (asyncio.to_thread) — never call directly from an
-    async function. The intermediate PIL images are released aggressively to
-    keep peak memory bounded.
+    Goal: never miss the page that carries the grand total. On vendor
+    invoices the totals block sits at the very end. So:
+
+    - total <= MAX_PAGES → render every page
+    - total >  MAX_PAGES → render the first (MAX_PAGES − TRAILER_PAGES)
+      pages + the last TRAILER_PAGES pages
+
+    We expose the chosen page numbers so the caller can label the images
+    with their real position in the source PDF when it talks to Claude.
     """
-    # Render at 110 DPI which is a noticeable memory savings vs 150 DPI for
-    # equivalent extraction quality; we resample down to TARGET_WIDTH_PX
-    # afterwards anyway.
-    images: list[Image.Image] = convert_from_bytes(
-        pdf_bytes, dpi=110, last_page=MAX_PAGES, fmt="ppm"
-    )
-    out: list[bytes] = []
-    for img in images:
+    if total_pages <= 0:
+        return []
+    if total_pages <= MAX_PAGES:
+        return list(range(1, total_pages + 1))
+
+    front_count = MAX_PAGES - TRAILER_PAGES
+    front = list(range(1, front_count + 1))
+    tail = list(range(total_pages - TRAILER_PAGES + 1, total_pages + 1))
+    return front + tail
+
+
+def _render_pages(pdf_bytes: bytes) -> list[tuple[int, int, bytes]]:
+    """Render selected pages at TARGET_WIDTH_PX wide.
+
+    Returns (page_number, total_pages, png_bytes) per rendered page.
+    The page_number is 1-indexed against the source PDF — when we
+    sample (front + trailer), there can be a gap in the numbers, and
+    we surface it to Claude so the omission is explicit instead of
+    silent.
+
+    Runs in a worker thread (asyncio.to_thread) — never call directly
+    from an async function. Renders one page at a time so peak memory
+    stays bounded to a single page regardless of source length.
+    """
+    # Read total page count without doing any rendering.
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        total_pages = len(reader.pages)
+    except Exception:  # noqa: BLE001
+        # Fall back to sending whatever pdf2image happens to produce
+        # for the first MAX_PAGES — better than failing extraction.
+        total_pages = MAX_PAGES
+
+    pages = _select_pages(total_pages)
+    out: list[tuple[int, int, bytes]] = []
+
+    for page_num in pages:
+        # Render at 110 DPI — noticeable memory savings vs 150 DPI for
+        # equivalent extraction quality, and we resample down to
+        # TARGET_WIDTH_PX afterwards anyway.
+        images: list[Image.Image] = convert_from_bytes(
+            pdf_bytes,
+            dpi=110,
+            first_page=page_num,
+            last_page=page_num,
+            fmt="ppm",
+        )
+        if not images:
+            continue
+        img = images[0]
         try:
             if img.width > TARGET_WIDTH_PX:
                 ratio = TARGET_WIDTH_PX / img.width
@@ -170,13 +226,13 @@ def _render_pages(pdf_bytes: bytes) -> list[bytes]:
                 img = converted
             buf = io.BytesIO()
             img.save(buf, format="PNG", optimize=True)
-            out.append(buf.getvalue())
+            out.append((page_num, total_pages, buf.getvalue()))
         finally:
             img.close()
     return out
 
 
-async def _call_claude(page_images: list[bytes]) -> dict[str, Any]:
+async def _call_claude(page_images: list[tuple[int, int, bytes]]) -> dict[str, Any]:
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not configured")
@@ -184,7 +240,9 @@ async def _call_claude(page_images: list[bytes]) -> dict[str, Any]:
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     content: list[dict[str, Any]] = []
-    for idx, png in enumerate(page_images, start=1):
+    rendered_pages = [pn for pn, _, _ in page_images]
+    total_pages = page_images[0][1] if page_images else 0
+    for page_num, total, png in page_images:
         content.append(
             {
                 "type": "image",
@@ -195,7 +253,24 @@ async def _call_claude(page_images: list[bytes]) -> dict[str, Any]:
                 },
             }
         )
-        content.append({"type": "text", "text": f"Page {idx} of {len(page_images)}"})
+        content.append({"type": "text", "text": f"Page {page_num} of {total}"})
+    # If we sampled (front + trailer) tell Claude which pages were
+    # omitted so it doesn't try to reconstruct missing line items —
+    # totals from the trailer should win against any partial sums.
+    if rendered_pages and len(rendered_pages) < total_pages:
+        omitted = sorted(set(range(1, total_pages + 1)) - set(rendered_pages))
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"Note: pages {omitted} of this {total_pages}-page document "
+                    "were not provided. Some line items are therefore not "
+                    "visible. Use the totals printed on the trailing pages "
+                    "(subtotal, tax, total) as the source of truth — do NOT "
+                    "compute totals by summing only the line items you can see."
+                ),
+            }
+        )
     content.append({"type": "text", "text": EXTRACTION_PROMPT})
 
     resp = await client.messages.create(

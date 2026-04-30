@@ -46,6 +46,14 @@ Rules:
   integer in cents (in that example: 6145, not "7.33 + 54.12"). The
   same applies to subtotal_cents, total_cents, and every line item
   amount.
+- Trust the printed totals block. subtotal_cents, tax_cents, and
+  total_cents must come from the explicitly labeled values on the
+  invoice (typically a "Subtotal / Tax / Total" block at the bottom
+  of the document, often on the LAST page). Do NOT recompute these by
+  summing visible line items — invoices frequently include freight,
+  surcharges, or rounding that the per-line amounts do not capture.
+  If the totals block isn't visible, return null for those three
+  fields rather than estimating.
 - Dates must be ISO 8601 (YYYY-MM-DD). If only month/year shown, return null.
 - If the document does not appear to be an invoice, set all fields to null and
   put an explanation in "notes".
