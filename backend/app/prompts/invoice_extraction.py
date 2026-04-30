@@ -39,6 +39,13 @@ Return ONLY a JSON object matching this schema, with no preamble or code fences:
 
 Rules:
 - All monetary values in cents (integers). Never use floats for money.
+- Output MUST be valid JSON. Numeric fields are bare numbers — never
+  expressions, never arithmetic, never comments. If a value on the
+  invoice is shown as the sum of multiple line items (e.g. tax broken
+  out as "$7.33 + $54.12"), compute the sum yourself and emit a single
+  integer in cents (in that example: 6145, not "7.33 + 54.12"). The
+  same applies to subtotal_cents, total_cents, and every line item
+  amount.
 - Dates must be ISO 8601 (YYYY-MM-DD). If only month/year shown, return null.
 - If the document does not appear to be an invoice, set all fields to null and
   put an explanation in "notes".

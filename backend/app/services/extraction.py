@@ -17,6 +17,7 @@ import base64
 import io
 import json
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -213,8 +214,85 @@ async def _call_claude(page_images: list[bytes]) -> dict[str, Any]:
 
     try:
         return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Claude returned non-JSON output: {exc}\n---\n{raw[:500]}")
+    except json.JSONDecodeError as first_err:
+        # Claude occasionally "shows its work" inline — emitting things
+        # like `"tax_cents": 7.33 + 54.12` when an invoice splits the
+        # tax into multiple components. Try to repair common patterns
+        # before giving up.
+        repaired = _repair_claude_json(raw)
+        if repaired is not None:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(
+            f"Claude returned non-JSON output: {first_err}\n---\n{raw[:500]}"
+        )
+
+
+# Match `"some_key": <num> + <num> [+ <num> ...]` appearing as a JSON
+# value, where each operand is an int or decimal. We capture the field
+# name too because cents fields need different handling — see _eval.
+_ARITH_EXPR = re.compile(
+    r'(?P<key>"(?P<name>[^"]+)"\s*:\s*)'
+    r"(?P<expr>-?\d+(?:\.\d+)?(?:\s*[+\-]\s*-?\d+(?:\.\d+)?)+)"
+    r"(?=\s*[,}\]\n])"
+)
+
+
+def _repair_claude_json(raw: str) -> str | None:
+    """Best-effort repair for common LLM JSON-emission bugs.
+
+    Handles arithmetic expressions in numeric value positions — the
+    most-frequent failure mode (Claude "shows its work" by writing e.g.
+    `"tax_cents": 7.33 + 54.12` instead of computing the integer).
+
+    Special-case: when the field name ends in `_cents` and any operand
+    contains a decimal point, the operands are in dollars (Claude saw
+    `$7.33 + $54.12` on the invoice and copied it verbatim into a cents
+    field). Multiply the result by 100 and round to the nearest int so
+    Pydantic's integer validation doesn't reject the float.
+
+    Returns the repaired string, or None if nothing was changed (so the
+    caller can surface the original parse error verbatim).
+    """
+    changed = False
+
+    def _eval_match(m: re.Match[str]) -> str:
+        nonlocal changed
+        expr = m.group("expr")
+        name = m.group("name")
+        is_cents_field = name.endswith("_cents")
+        operands_have_decimals = "." in expr
+        try:
+            # Tokenize into numbers + operators. We only allow + and -
+            # so this is safe to evaluate without eval().
+            tokens = re.split(r"\s*([+\-])\s*", expr.strip())
+            total = float(tokens[0])
+            i = 1
+            while i < len(tokens):
+                op = tokens[i]
+                num = float(tokens[i + 1])
+                total += num if op == "+" else -num
+                i += 2
+
+            if is_cents_field and operands_have_decimals:
+                # Claude emitted dollars where cents was expected.
+                value = round(total * 100)
+            elif total == int(total):
+                value = int(total)
+            else:
+                # Quantity/non-cents field with a decimal result —
+                # preserve precision but cap to 4 decimal places.
+                value = round(total, 4)
+
+            changed = True
+            return f"{m.group('key')}{value}"
+        except Exception:  # noqa: BLE001
+            return m.group(0)
+
+    repaired = _ARITH_EXPR.sub(_eval_match, raw)
+    return repaired if changed else None
 
 
 async def _match_vendor(session: AsyncSession, vendor_name: str) -> UUID | None:
