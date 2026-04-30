@@ -122,22 +122,17 @@ export function StampPreviewOverlay({
     return () => obs.disconnect();
   }, [containerRef, effective.x, effective.y, effective.width]);
 
-  // Drag/resize gestures. Whichever pointer goes down first owns the
-  // gesture until it goes up.
-  const dragRef = useRef<{
-    kind: "move" | "resize";
-    startX: number;
-    startY: number;
-    startLeft: number;
-    startTop: number;
-    startWidth: number;
-    pointerId: number;
-  } | null>(null);
+  // Drag/resize gestures use window-scoped listeners during the active
+  // drag instead of element-scoped pointer capture. Window listeners
+  // are bulletproof — they fire even if the cursor strays outside the
+  // PDF page area, and they're not affected by React's synthetic event
+  // pooling, portal boundaries, or pointer-capture quirks.
+  const rectRef = useRef(rect);
+  rectRef.current = rect;
 
   function clampToContainer(left: number, top: number, width: number) {
     if (!containerRef.current) return { left, top, width };
     const r = containerRef.current.getBoundingClientRect();
-    const height = width / STAMP_ASPECT;
     const minW = r.width * MIN_WIDTH_FRAC;
     const maxW = r.width * MAX_WIDTH_FRAC;
     const w = Math.max(minW, Math.min(maxW, width));
@@ -157,50 +152,46 @@ export function StampPreviewOverlay({
     };
   }
 
-  function onPointerDown(e: ReactPointerEvent<HTMLElement>, kind: "move" | "resize") {
+  function startDrag(
+    e: ReactPointerEvent<HTMLElement>,
+    kind: "move" | "resize",
+  ) {
     if (!editable || !rect) return;
     e.preventDefault();
     e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    dragRef.current = {
-      kind,
-      startX: e.clientX,
-      startY: e.clientY,
-      startLeft: rect.left,
-      startTop: rect.top,
-      startWidth: rect.width,
-      pointerId: e.pointerId,
-    };
-  }
 
-  function onPointerMove(e: ReactPointerEvent<HTMLElement>) {
-    const d = dragRef.current;
-    if (!d || d.pointerId !== e.pointerId || !rect) return;
-    const dx = e.clientX - d.startX;
-    const dy = e.clientY - d.startY;
-    if (d.kind === "move") {
-      const next = clampToContainer(
-        d.startLeft + dx,
-        d.startTop + dy,
-        d.startWidth,
-      );
-      setRect(next);
-    } else {
-      // Resize: bottom-right corner. Width grows with dx + dy together,
-      // proportionally so aspect stays locked.
-      const proposed = d.startWidth + Math.max(dx, dy * STAMP_ASPECT);
-      const next = clampToContainer(d.startLeft, d.startTop, proposed);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const start = { ...rect };
+
+    function onMove(ev: PointerEvent) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      let next: { left: number; top: number; width: number };
+      if (kind === "move") {
+        next = clampToContainer(start.left + dx, start.top + dy, start.width);
+      } else {
+        // Resize from bottom-right. Width tracks the larger of the two
+        // axis-aligned deltas (locked aspect 2.29:1).
+        const proposed = start.width + Math.max(dx, dy * STAMP_ASPECT);
+        next = clampToContainer(start.left, start.top, proposed);
+      }
       setRect(next);
     }
-  }
 
-  function onPointerUp(e: ReactPointerEvent<HTMLElement>) {
-    const d = dragRef.current;
-    if (!d || d.pointerId !== e.pointerId) return;
-    dragRef.current = null;
-    if (rect) {
-      onChange(pixelsToFrac(rect));
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      const final = rectRef.current;
+      if (final) {
+        onChange(pixelsToFrac(final));
+      }
     }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   if (!rect || !containerRef.current) {
@@ -232,10 +223,7 @@ export function StampPreviewOverlay({
         // drag on mobile doesn't scroll the page underneath.
         touchAction: editable ? "none" : "auto",
       }}
-      onPointerDown={(e) => onPointerDown(e, "move")}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerDown={(e) => startDrag(e, "move")}
     >
       <StampBody
         invoice={invoice}
@@ -248,7 +236,7 @@ export function StampPreviewOverlay({
         <button
           type="button"
           aria-label="Resize stamp"
-          onPointerDown={(e) => onPointerDown(e, "resize")}
+          onPointerDown={(e) => startDrag(e, "resize")}
           className="absolute -bottom-2 -right-2 flex h-5 w-5 items-center justify-center bg-navy text-stone shadow border border-stone cursor-nwse-resize hover:bg-amber hover:text-navy"
           style={{ touchAction: "none" }}
         >
