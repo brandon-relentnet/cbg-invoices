@@ -194,13 +194,30 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
             disabled={disabled}
             className={cn(
               "block w-full border bg-stone/50 text-graphite font-mono",
-              "min-h-[44px] md:min-h-0 pl-3 pr-9 py-3 md:py-2 text-base md:text-sm",
+              // Match Input.tsx exactly so a row of comboboxes + a date
+              // <input> render at the same height.
+              "h-10 px-3 py-2 text-base md:text-sm",
+              // Right padding reserves room for the chevron and, when
+              // the value is "custom", the inline indicator.
+              isCustom && !open ? "pr-[68px]" : "pr-9",
               "focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber",
               "placeholder:text-slate-400 placeholder:font-sans",
               "disabled:opacity-60 disabled:cursor-not-allowed",
               error ? "border-red-600" : "border-slate-300",
             )}
           />
+          {/* Custom-value indicator — sits inside the input so its
+              presence/absence doesn't shift surrounding layout. Only
+              shown when the typed value isn't in the curated options
+              and the dropdown is closed. */}
+          {isCustom && !open && (
+            <span
+              className="pointer-events-none absolute inset-y-0 right-8 flex items-center text-[9px] uppercase tracking-wider font-bold text-amber"
+              aria-hidden
+            >
+              {customSuffix}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -267,13 +284,6 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
             </ul>
           )}
         </div>
-
-        {/* Custom-value indicator */}
-        {isCustom && !open && (
-          <p className="mt-1 text-[10px] text-amber font-semibold uppercase tracking-wider">
-            {customSuffix}
-          </p>
-        )}
 
         {error && (
           <p className="mt-1 text-xs text-red-700">{error}</p>
