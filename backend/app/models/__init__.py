@@ -2,9 +2,10 @@
 from app.models.access_request import AccessRequest, AccessRequestStatus
 from app.models.audit_log import AuditLog
 from app.models.coding_option import CODING_FIELD_VALUES, CodingOption
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import DocumentType, Invoice, InvoiceStatus, TriageReason
 from app.models.project import Project
 from app.models.qbo_token import QboToken
+from app.models.trusted_sender_domain import SOURCE_VALUES, TrustedSenderDomain
 from app.models.vendor import Vendor
 
 __all__ = [
@@ -13,9 +14,13 @@ __all__ = [
     "AuditLog",
     "CODING_FIELD_VALUES",
     "CodingOption",
+    "DocumentType",
     "Invoice",
     "InvoiceStatus",
     "Project",
     "QboToken",
+    "SOURCE_VALUES",
+    "TriageReason",
+    "TrustedSenderDomain",
     "Vendor",
 ]

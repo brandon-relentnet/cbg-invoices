@@ -31,6 +31,10 @@ Return ONLY a JSON object matching this schema, with no preamble or code fences:
   "notes": string | null,
   "confidence": "high" | "medium" | "low",
 
+  "document_type":
+    "invoice" | "statement" | "quote" | "order_ack" |
+    "receipt" | "supporting_doc" | "other" | "unknown",
+
   "job_number": string | null,
   "cost_code": string | null,
   "coding_date": string | null,
@@ -70,6 +74,45 @@ Rules:
 - If the document does not appear to be an invoice, set all fields to null and
   put an explanation in "notes".
 - Do not hallucinate vendor names from letterheads that aren't clearly the biller.
+
+Document type classification (document_type):
+This field tells our routing layer whether the document belongs in the AP
+review queue at all, or in a separate "triage" bucket for human inspection.
+Pick the BEST match from this list — when in doubt, prefer the more
+specific category over "other" or "unknown":
+
+- "invoice": a bill — the vendor is asking to be paid for goods or
+  services already delivered. Has a total due, an invoice number, and
+  usually payment terms. THIS is the only category that goes straight
+  to the active review queue.
+
+- "statement": a periodic account summary listing multiple prior
+  invoices, payments, and an aging balance. The header usually says
+  "STATEMENT" or "Account Summary". NOT itself a bill.
+
+- "quote": a price proposal for work not yet authorised — usually
+  labeled "QUOTE", "ESTIMATE", or "PROPOSAL". NOT a bill.
+
+- "order_ack": confirmation of an order Cambridge has placed but
+  before the goods/services have been delivered or billed. Often
+  labeled "ORDER ACKNOWLEDGEMENT", "ORDER CONFIRMATION", or "SO". May
+  show prices and a total but is NOT yet payable; the invoice comes
+  later. Treat the Silvercote-style order acknowledgement form as
+  this category.
+
+- "receipt": evidence of a payment that has already been made. Often
+  labeled "RECEIPT" or "PAID". No AP action needed.
+
+- "supporting_doc": a non-bill document that arrived alongside an
+  invoice — cover letter, W-9, certificate of insurance, lien waiver,
+  packing slip, delivery ticket. Often shorter, no monetary total.
+
+- "other": clearly a vendor document of some kind but doesn't fit
+  any of the above (warranty paperwork, MSDS, marketing brochure).
+
+- "unknown": you genuinely cannot tell what this is — the document
+  is too low-quality, foreign-language, or otherwise unintelligible
+  to classify. Use sparingly; prefer a specific category.
 
 Cambridge AP coding markup (job_number, cost_code, coding_date, approver):
 These four fields are NOT printed by the vendor — they are added by Cambridge's

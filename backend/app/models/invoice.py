@@ -28,9 +28,43 @@ class InvoiceStatus(str, enum.Enum):
     EXTRACTING = "extracting"
     EXTRACTION_FAILED = "extraction_failed"
     READY_FOR_REVIEW = "ready_for_review"
+    NEEDS_TRIAGE = "needs_triage"
     APPROVED = "approved"
     POSTED_TO_QBO = "posted_to_qbo"
     REJECTED = "rejected"
+
+
+class DocumentType(str, enum.Enum):
+    """What kind of document this is, per Claude classification.
+
+    Only `INVOICE` (with high confidence) belongs in the main review
+    queue; everything else routes to triage so AP can decide whether
+    to promote, reject, or trust the sender. Set by extraction; null
+    on rows that pre-date this feature.
+    """
+
+    INVOICE = "invoice"
+    STATEMENT = "statement"           # account summary, multiple invoices
+    QUOTE = "quote"                   # not yet billable
+    ORDER_ACK = "order_ack"           # order acknowledgement, not yet billable
+    RECEIPT = "receipt"               # already paid, no AP action needed
+    SUPPORTING_DOC = "supporting_doc" # cover letter, W-9, etc.
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+class TriageReason(str, enum.Enum):
+    """Why an invoice landed in NEEDS_TRIAGE rather than READY_FOR_REVIEW.
+
+    Priority order (when multiple apply, the most actionable one wins):
+    encrypted_pdf > non_invoice > low_confidence > body_rendered > unknown_sender.
+    """
+
+    NON_INVOICE = "non_invoice"
+    UNKNOWN_SENDER = "unknown_sender"
+    BODY_RENDERED = "body_rendered"
+    ENCRYPTED_PDF = "encrypted_pdf"
+    LOW_CONFIDENCE = "low_confidence"
 
 
 class Invoice(Base):
@@ -134,3 +168,28 @@ class Invoice(Base):
     # margin). Schema: {"x": float, "y": float, "width": float} — all
     # fractions of the page (top-anchored). See alembic 0008.
     stamp_position: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Triage routing — set by extraction or webhook pre-flight checks.
+    # document_type=INVOICE + confidence=high → READY_FOR_REVIEW.
+    # Anything else → NEEDS_TRIAGE with a reason. NULL on legacy rows.
+    document_type: Mapped[DocumentType | None] = mapped_column(
+        SAEnum(
+            DocumentType,
+            name="document_type",
+            native_enum=False,
+            length=24,
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
+        nullable=True,
+        index=True,
+    )
+    triage_reason: Mapped[TriageReason | None] = mapped_column(
+        SAEnum(
+            TriageReason,
+            name="triage_reason",
+            native_enum=False,
+            length=24,
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
+        nullable=True,
+    )

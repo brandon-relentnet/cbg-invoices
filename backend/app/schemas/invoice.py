@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.invoice import InvoiceStatus
+from app.models.invoice import DocumentType, InvoiceStatus, TriageReason
 
 
 class LineItem(BaseModel):
@@ -44,6 +44,14 @@ class ExtractedFields(BaseModel):
     cost_code: str | None = None
     coding_date: date | None = None
     approver: str | None = None
+
+    # Triage classification: tells the post-extraction router whether
+    # this is actually an invoice or something else (statement / quote /
+    # order_ack / receipt / supporting_doc / other / unknown). Used in
+    # combination with `confidence` to decide READY_FOR_REVIEW vs
+    # NEEDS_TRIAGE. Defaults to UNKNOWN so missing classifications
+    # route to triage rather than silently masquerading as invoices.
+    document_type: DocumentType = DocumentType.UNKNOWN
 
 
 class _InvoiceBase(BaseModel):
@@ -97,6 +105,10 @@ class _InvoiceBase(BaseModel):
     assigned_at: datetime | None = None
 
     stamp_position: dict | None = None
+
+    # Triage routing
+    document_type: DocumentType | None = None
+    triage_reason: TriageReason | None = None
 
 
 class InvoiceListItem(_InvoiceBase):

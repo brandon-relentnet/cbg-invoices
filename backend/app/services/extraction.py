@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import AsyncSessionLocal
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import DocumentType, Invoice, InvoiceStatus, TriageReason
 from app.models.vendor import Vendor
 from app.prompts.invoice_extraction import EXTRACTION_PROMPT
 from app.schemas.invoice import ExtractedFields
@@ -133,7 +133,16 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
     invoice.cost_code = fields.cost_code
     invoice.coding_date = fields.coding_date
     invoice.approver = fields.approver
-    invoice.status = InvoiceStatus.READY_FOR_REVIEW
+    invoice.document_type = fields.document_type
+
+    # Routing decision — only high-confidence invoices skip triage.
+    # See spec: docs/superpowers/specs/2026-04-30-email-triage-design.md.
+    # If the webhook pre-flight already set a triage_reason (e.g.
+    # body_rendered, unknown_sender), preserve it but only use it as a
+    # tiebreaker — content classification wins.
+    next_status, next_reason = _route_after_extraction(invoice, fields)
+    invoice.status = next_status
+    invoice.triage_reason = next_reason
 
     await audit.record_system(
         session,
@@ -148,10 +157,71 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
             "cost_code": fields.cost_code,
             "approver": fields.approver,
             "confidence": fields.confidence,
+            "document_type": fields.document_type.value,
+            "status": next_status.value,
+            "triage_reason": next_reason.value if next_reason else None,
         },
-        message=f"confidence={fields.confidence}",
+        message=f"confidence={fields.confidence} type={fields.document_type.value}",
     )
-    log.info("Extracted invoice %s (vendor=%s, total=%s)", invoice_id, fields.vendor_name, fields.total_cents)
+    if next_status == InvoiceStatus.NEEDS_TRIAGE:
+        await audit.record_system(
+            session,
+            action="triage_routed",
+            invoice_id=invoice_id,
+            message=f"reason={next_reason.value if next_reason else 'unknown'} "
+            f"document_type={fields.document_type.value} "
+            f"confidence={fields.confidence}",
+        )
+    log.info(
+        "Extracted invoice %s (vendor=%s, total=%s, type=%s, status=%s)",
+        invoice_id,
+        fields.vendor_name,
+        fields.total_cents,
+        fields.document_type.value,
+        next_status.value,
+    )
+
+
+def _route_after_extraction(
+    invoice: Invoice, fields: ExtractedFields
+) -> tuple[InvoiceStatus, TriageReason | None]:
+    """Decide where the invoice goes after a successful extraction.
+
+    Routing precedence (most-actionable reason wins when multiple apply):
+
+      1. Webhook pre-flight may have already set ``triage_reason`` to
+         BODY_RENDERED or UNKNOWN_SENDER. That stays as the reason
+         **only if** content classification doesn't override it.
+      2. document_type != INVOICE  → NEEDS_TRIAGE / NON_INVOICE
+         (overrides any pre-flight reason — content trumps source).
+      3. document_type == INVOICE + confidence != "high"
+         → NEEDS_TRIAGE / LOW_CONFIDENCE
+      4. document_type == INVOICE + confidence == "high"
+         → keep any pre-flight triage reason (BODY_RENDERED,
+         UNKNOWN_SENDER) → NEEDS_TRIAGE; otherwise → READY_FOR_REVIEW.
+         Per the design, a high-confidence invoice from an unknown
+         sender DOES go to the main queue (sender is a tiebreaker,
+         not a hard gate), so UNKNOWN_SENDER alone gets cleared.
+    """
+    pre_flight_reason = invoice.triage_reason
+
+    # Content-based override: doc isn't an invoice at all.
+    if fields.document_type != DocumentType.INVOICE:
+        return InvoiceStatus.NEEDS_TRIAGE, TriageReason.NON_INVOICE
+
+    # Invoice but low confidence — needs human eyes.
+    if fields.confidence != "high":
+        return InvoiceStatus.NEEDS_TRIAGE, TriageReason.LOW_CONFIDENCE
+
+    # High-confidence invoice. Body-rendered docs still ride through
+    # triage so AP can confirm we read the email body correctly. An
+    # unknown sender alone doesn't trigger triage when content is
+    # clearly a confident invoice — the spec calls this out
+    # explicitly.
+    if pre_flight_reason == TriageReason.BODY_RENDERED:
+        return InvoiceStatus.NEEDS_TRIAGE, TriageReason.BODY_RENDERED
+
+    return InvoiceStatus.READY_FOR_REVIEW, None
 
 
 def _select_pages(total_pages: int) -> list[int]:
