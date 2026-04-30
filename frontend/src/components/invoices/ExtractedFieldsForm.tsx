@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
 import { Combobox } from "@/components/ui/Combobox";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCents, formatDollarsInput, parseDollars } from "@/lib/format";
 import type { InvoicePatchPayload } from "@/lib/invoices";
 import { groupByField, useCodingOptions } from "@/lib/codingOptions";
@@ -288,38 +289,36 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, onCo
 
         {/* ---------- Assignment (Vendor + Project) ---------- */}
         <FormSection title="Assignment">
-          <Select
+          <SearchableSelect
             label="Vendor"
             labelTone="quiet"
             value={form.vendor_id}
-            onChange={(e) => update("vendor_id", e.target.value)}
-          >
-            <option value="">— pick a vendor —</option>
-            {vendorOptions.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.display_name}
-              </option>
-            ))}
-          </Select>
+            onChange={(v) => update("vendor_id", v)}
+            placeholder="Search vendors…"
+            options={vendorOptions.map((v) => ({
+              value: v.id,
+              label: v.display_name,
+            }))}
+            disabled={disabled}
+          />
           {extractedDiffers && (
             <p className="text-xs text-slate-500 mt-1">
               Extracted as <span className="font-semibold text-graphite">{form.vendor_name}</span>
             </p>
           )}
           <div className="mt-3">
-            <Select
+            <SearchableSelect
               label="Project"
               labelTone="quiet"
               value={form.project_id}
-              onChange={(e) => update("project_id", e.target.value)}
-            >
-              <option value="">— no project —</option>
-              {projectOptions.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.display_name}
-                </option>
-              ))}
-            </Select>
+              onChange={(v) => update("project_id", v)}
+              placeholder="Search projects…"
+              options={projectOptions.map((p) => ({
+                value: p.id,
+                label: p.display_name,
+              }))}
+              disabled={disabled}
+            />
           </div>
         </FormSection>
 
