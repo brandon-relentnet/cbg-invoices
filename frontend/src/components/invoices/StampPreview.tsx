@@ -19,6 +19,7 @@
  * uses, so resizing only changes width — height tracks proportionally.
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { ArrowsPointingInIcon } from "@heroicons/react/24/outline";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
@@ -202,12 +203,20 @@ export function StampPreviewOverlay({
     }
   }
 
-  if (!rect) {
+  if (!rect || !containerRef.current) {
     // Container hasn't measured yet (PDF still rendering). Don't paint.
     return null;
   }
 
-  return (
+  // CRITICAL: render the stamp as a CHILD of the PDF page element via
+  // a portal. Otherwise the stamp's `position: absolute` coordinates
+  // would be relative to whatever positioned ancestor exists in the
+  // route's DOM tree (the column wrapper), but our pixel math uses
+  // the page element's bounding box as the reference. Mismatch =
+  // stamp visually anchored to the wrong origin and drag updates
+  // appearing to "snap back". Portal-into-page makes left/top map
+  // 1:1 to page coordinates.
+  const overlay = (
     <div
       className={cn(
         "absolute select-none",
@@ -219,6 +228,9 @@ export function StampPreviewOverlay({
         top: rect.top,
         width: rect.width,
         zIndex: 20,
+        // Disable the browser's native touch behaviors so a one-finger
+        // drag on mobile doesn't scroll the page underneath.
+        touchAction: editable ? "none" : "auto",
       }}
       onPointerDown={(e) => onPointerDown(e, "move")}
       onPointerMove={onPointerMove}
@@ -245,6 +257,8 @@ export function StampPreviewOverlay({
       )}
     </div>
   );
+
+  return createPortal(overlay, containerRef.current);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
