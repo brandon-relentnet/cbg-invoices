@@ -31,7 +31,7 @@ from app.schemas.invoice import (
     InvoicePatch,
     RejectInvoiceRequest,
 )
-from app.services import audit, storage, extraction
+from app.services import audit, extraction, storage, trusted_domains
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["invoices"])
@@ -581,6 +581,115 @@ async def reextract_invoice(
     )
     await session.commit()
     background.add_task(extraction.extract_invoice, invoice_id)
+    return await _detail_with_pdf(invoice)
+
+
+# ---------- Triage actions ----------
+
+
+@router.post("/{invoice_id}/promote", response_model=InvoiceDetail)
+async def promote_from_triage(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Move an invoice from NEEDS_TRIAGE to READY_FOR_REVIEW.
+
+    Used when the AP team confirms a triaged document is actually a
+    real invoice that should be processed normally. Clears
+    ``triage_reason`` since the row no longer needs explanation. The
+    underlying ``document_type`` stays on the row so we can still
+    show "promoted from triage" affordances later.
+    """
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status != InvoiceStatus.NEEDS_TRIAGE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invoice is in {invoice.status.value}, not needs_triage",
+        )
+
+    previous_reason = invoice.triage_reason.value if invoice.triage_reason else None
+    invoice.status = InvoiceStatus.READY_FOR_REVIEW
+    invoice.triage_reason = None
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="triage_promoted",
+        invoice_id=invoice_id,
+        message=f"reason={previous_reason}",
+    )
+    await session.commit()
+    return await _detail_with_pdf(invoice)
+
+
+@router.post("/{invoice_id}/trust-sender", response_model=InvoiceDetail)
+async def trust_sender_and_promote(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Trust the sender's domain + promote the invoice in one click.
+
+    Pulls the registrable domain from ``sender_email``, upserts it into
+    ``trusted_sender_domains`` with source=``promoted_from_triage``,
+    then routes the row to READY_FOR_REVIEW. If the row isn't in
+    NEEDS_TRIAGE we still trust the domain (no harm, idempotent) but
+    we don't change the status.
+    """
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not invoice.sender_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Invoice has no sender email — can't trust a domain",
+        )
+
+    domain = trusted_domains.extract_registrable_domain(invoice.sender_email)
+    if not domain:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not parse a domain from {invoice.sender_email!r}",
+        )
+
+    try:
+        row = await trusted_domains.upsert_manual(
+            session,
+            domain=domain,
+            actor_id=user.id,
+            actor_email=user.email,
+            notes=f"Trusted via triage of invoice {invoice_id}",
+            source="promoted_from_triage",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="sender_trusted",
+        invoice_id=invoice_id,
+        message=f"domain={row.domain} source={row.source}",
+    )
+
+    if invoice.status == InvoiceStatus.NEEDS_TRIAGE:
+        previous_reason = invoice.triage_reason.value if invoice.triage_reason else None
+        invoice.status = InvoiceStatus.READY_FOR_REVIEW
+        invoice.triage_reason = None
+        await audit.record(
+            session,
+            actor_id=user.id,
+            actor_email=user.email,
+            action="triage_promoted",
+            invoice_id=invoice_id,
+            message=f"reason={previous_reason} via=trust-sender",
+        )
+
+    await session.commit()
     return await _detail_with_pdf(invoice)
 
 
