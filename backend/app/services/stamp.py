@@ -55,6 +55,68 @@ class StampFields:
     approver: str
 
 
+# Aspect ratio of the stamp box (width:height). Mirrors the visual
+# proportions of the HTML preview the PM sees on the review screen.
+_STAMP_ASPECT = 220 / 96  # ≈ 2.29
+
+
+# Default placement when no per-invoice position is set: top-right
+# corner with a 24pt margin, 220pt wide.
+_DEFAULT_BOX_W = 220.0
+_DEFAULT_BOX_H = _DEFAULT_BOX_W / _STAMP_ASPECT
+_DEFAULT_MARGIN = 24.0
+
+
+def _resolve_box(
+    page_w: float,
+    page_h: float,
+    position: dict | None,
+) -> tuple[float, float, float, float]:
+    """Compute (x, y, w, h) in PDF points for the stamp box.
+
+    PDF coordinates have origin at BOTTOM-LEFT (y grows up). The stored
+    position uses a TOP-anchored y (matching how the user thinks). We
+    convert here.
+
+    `position` is the raw JSONB dict from the invoice row, expected to
+    look like `{"x": 0.5, "y": 0.05, "width": 0.32}` with each value a
+    fraction of the page. None = use defaults.
+    """
+    if not position or "x" not in position or "y" not in position or "width" not in position:
+        # Default: top-right with 24pt margin, 220pt wide
+        x = page_w - _DEFAULT_BOX_W - _DEFAULT_MARGIN
+        y = page_h - _DEFAULT_BOX_H - _DEFAULT_MARGIN
+        return x, y, _DEFAULT_BOX_W, _DEFAULT_BOX_H
+
+    try:
+        # Clamp width to a sensible range so an out-of-bounds value
+        # (e.g. from a corrupt patch payload) can't render an invisible
+        # or page-spanning stamp.
+        width_frac = max(0.05, min(0.95, float(position["width"])))
+        box_w = page_w * width_frac
+        box_h = box_w / _STAMP_ASPECT
+
+        # x is the fraction of page width to the stamp's LEFT edge.
+        # Clamp so the box stays on-page.
+        x_frac = max(0.0, min(1.0 - width_frac, float(position["x"])))
+        x = page_w * x_frac
+
+        # y is fraction of page height from the TOP to the stamp's top
+        # edge. Convert to bottom-anchored PDF y. Clamp so the box stays
+        # on-page (the stamp's bottom edge can't go below page).
+        h_frac = box_h / page_h
+        y_frac = max(0.0, min(1.0 - h_frac, float(position["y"])))
+        y = page_h - (page_h * y_frac) - box_h
+
+        return x, y, box_w, box_h
+    except (TypeError, ValueError, KeyError):
+        # Bad payload — fall back to default rather than failing the post.
+        log.warning("Invalid stamp_position payload, using default: %r", position)
+        x = page_w - _DEFAULT_BOX_W - _DEFAULT_MARGIN
+        y = page_h - _DEFAULT_BOX_H - _DEFAULT_MARGIN
+        return x, y, _DEFAULT_BOX_W, _DEFAULT_BOX_H
+
+
 def has_required_fields(
     job_number: str | None,
     cost_code: str | None,
@@ -73,16 +135,20 @@ def has_required_fields(
 async def stamp_invoice_pdf(
     pdf_bytes: bytes,
     fields: StampFields,
+    position: dict | None = None,
 ) -> bytes:
     """Return a new PDF byte string with the stamp baked onto page 1.
+
+    `position` is the per-invoice override (see _resolve_box); when None,
+    the stamp lands at the default top-right location.
 
     Runs the heavy reportlab + pypdf work in a worker thread so the asyncio
     loop stays free.
     """
-    return await asyncio.to_thread(_stamp_sync, pdf_bytes, fields)
+    return await asyncio.to_thread(_stamp_sync, pdf_bytes, fields, position)
 
 
-def _stamp_sync(pdf_bytes: bytes, fields: StampFields) -> bytes:
+def _stamp_sync(pdf_bytes: bytes, fields: StampFields, position: dict | None) -> bytes:
     """Synchronous body — only call via asyncio.to_thread()."""
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -107,7 +173,8 @@ def _stamp_sync(pdf_bytes: bytes, fields: StampFields) -> bytes:
         log.warning("Could not read page dimensions: %s", exc)
         return pdf_bytes
 
-    overlay = _build_overlay_page(page_w, page_h, fields)
+    box_x, box_y, box_w, box_h = _resolve_box(page_w, page_h, position)
+    overlay = _build_overlay_page(page_w, page_h, fields, box_x, box_y, box_w, box_h)
     if overlay is None:
         return pdf_bytes
 
@@ -127,47 +194,54 @@ def _stamp_sync(pdf_bytes: bytes, fields: StampFields) -> bytes:
     return out.getvalue()
 
 
-def _build_overlay_page(page_w: float, page_h: float, fields: StampFields):
+def _build_overlay_page(
+    page_w: float,
+    page_h: float,
+    fields: StampFields,
+    x: float,
+    y: float,
+    box_w: float,
+    box_h: float,
+):
     """Produce a single-page PDF (as a pypdf PageObject) drawing only the stamp.
 
-    Returns None on any reportlab failure.
+    `(x, y, box_w, box_h)` are in PDF points with PDF's bottom-anchored
+    coordinate system. Returns None on any reportlab failure.
     """
     try:
         buf = io.BytesIO()
         c = canvas.Canvas(buf, pagesize=(page_w, page_h))
 
-        # Stamp dimensions / position. Top-right corner with a margin.
-        # PDF coordinate origin is BOTTOM-LEFT, y grows up.
-        box_w = 220
-        box_h = 96
-        margin_x = 24
-        margin_y = 24
-
-        x = page_w - box_w - margin_x
-        y = page_h - box_h - margin_y
+        # Scale all internal sizes proportionally so a resized stamp still
+        # looks correctly proportioned. Reference: 220×96 box uses 16pt
+        # header, 7pt label font, 9pt value font, 8pt left padding.
+        scale = box_w / 220.0
+        header_h = 16 * scale
+        label_font = max(5, 7 * scale)
+        value_font = max(6, 9 * scale)
+        line_height = 16 * scale
+        label_x_pad = 8 * scale
+        value_x_pad = 70 * scale
+        body_top_pad = 8 * scale
 
         # Box: white fill so the page content underneath doesn't bleed
         # through, navy stroke for the brand outline.
         c.setStrokeColor(COLOR_NAVY)
         c.setFillColor(COLOR_WHITE)
-        c.setLineWidth(1.4)
+        c.setLineWidth(max(0.8, 1.4 * scale))
         c.rect(x, y, box_w, box_h, stroke=1, fill=1)
 
-        # Header strip — small amber band at the top of the stamp with
-        # "CAMBRIDGE / AP CODING" small caps. Reads like a real stamp.
-        header_h = 16
+        # Header strip — small amber band at the top of the stamp.
         c.setFillColor(COLOR_AMBER)
         c.rect(x, y + box_h - header_h, box_w, header_h, stroke=0, fill=1)
         c.setFillColor(COLOR_NAVY)
-        c.setFont("Helvetica-Bold", 7)
-        c.drawString(x + 8, y + box_h - header_h + 5, "CAMBRIDGE")
+        c.setFont("Helvetica-Bold", label_font)
+        c.drawString(x + label_x_pad, y + box_h - header_h + (5 * scale), "CAMBRIDGE")
         c.drawRightString(
-            x + box_w - 8, y + box_h - header_h + 5, "AP CODING"
+            x + box_w - label_x_pad,
+            y + box_h - header_h + (5 * scale),
+            "AP CODING",
         )
-
-        # Field rows. Use a fixed-width font so values line up like a stamp.
-        c.setFillColor(COLOR_NAVY)
-        c.setFont("Helvetica-Bold", 7)
 
         rows = [
             ("JOB #", fields.job_number),
@@ -176,20 +250,14 @@ def _build_overlay_page(page_w: float, page_h: float, fields: StampFields):
             ("APPROVED", fields.approver),
         ]
 
-        # Each row gets one line. Vertical spacing computed so they're
-        # evenly distributed within the box minus header.
-        body_top = y + box_h - header_h - 8
-        line_height = 16
-        label_x = x + 8
-        value_x = x + 70
-
+        body_top = y + box_h - header_h - body_top_pad
         for i, (label, value) in enumerate(rows):
             row_y = body_top - i * line_height
-            c.setFont("Helvetica-Bold", 7)
+            c.setFont("Helvetica-Bold", label_font)
             c.setFillColor(COLOR_NAVY)
-            c.drawString(label_x, row_y, label)
-            c.setFont("Courier", 9)
-            c.drawString(value_x, row_y, _truncate(value, 24))
+            c.drawString(x + label_x_pad, row_y, label)
+            c.setFont("Courier", value_font)
+            c.drawString(x + value_x_pad, row_y, _truncate(value, 24))
 
         c.save()
         overlay_reader = PdfReader(io.BytesIO(buf.getvalue()))

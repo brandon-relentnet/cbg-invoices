@@ -130,6 +130,7 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
                     coding_date=invoice.coding_date,  # type: ignore[arg-type]
                     approver=invoice.approver or "",
                 ),
+                position=invoice.stamp_position,
             )
             log.info("Stamped invoice %s with AP coding markup", invoice_id)
         except Exception as exc:  # noqa: BLE001

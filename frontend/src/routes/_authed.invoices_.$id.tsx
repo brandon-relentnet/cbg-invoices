@@ -23,7 +23,7 @@ import { SplitButton, type SplitButtonOption } from "@/components/ui/SplitButton
 import { StatusBadge } from "@/components/invoices/StatusBadge";
 import { PdfViewer } from "@/components/invoices/PdfViewer";
 import { ExtractedFieldsForm } from "@/components/invoices/ExtractedFieldsForm";
-import { StampPreview } from "@/components/invoices/StampPreview";
+import { StampPreviewOverlay, type StampPosition } from "@/components/invoices/StampPreview";
 import { InvoiceSummary } from "@/components/invoices/InvoiceSummary";
 import { AssigneePicker } from "@/components/invoices/AssigneePicker";
 import {
@@ -101,6 +101,23 @@ function InvoiceDetailPage() {
     coding_date: "",
     approver: "",
   });
+
+  // Refs to the rendered PDF page, used as the anchor for the
+  // draggable stamp overlay. We resolve via querySelector after each
+  // render because react-pdf's Page DOM appears asynchronously.
+  const pdfColumnRef = useRef<HTMLDivElement>(null);
+  const [pageEl, setPageEl] = useState<HTMLElement | null>(null);
+  const [currentPdfPage, setCurrentPdfPage] = useState(1);
+
+  // Live stamp position — falls back to invoice.stamp_position when
+  // unset, then to default top-right inside the overlay component.
+  const [stampPosition, setStampPosition] = useState<StampPosition | null>(null);
+  // Sync from the invoice when it loads / refreshes
+  useEffect(() => {
+    if (invoiceQuery.data?.stamp_position) {
+      setStampPosition(invoiceQuery.data.stamp_position);
+    }
+  }, [invoiceQuery.data?.stamp_position]);
 
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -397,17 +414,57 @@ function InvoiceDetailPage() {
             `min-w-[460px]` (intentional for inner horizontal scroll on
             mobile) propagates upward and forces the whole grid wider
             than the viewport, causing horizontal page scroll. */}
-        <div className="relative min-w-0 lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]">
-          <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url ?? undefined} />
-          {/* Live stamp preview, absolute-positioned over the PDF viewer's
-              top-right corner so it sits exactly where the actual stamp
-              will land on the QBO attachment. Hidden during extraction
-              and on terminal states (posted/rejected) where the stamp
-              is no longer relevant. */}
-          {showEditor && (
-            <div className="hidden md:block absolute top-3 right-3 z-10 pointer-events-none">
-              <StampPreview invoice={codingDraft} />
-            </div>
+        <div
+          ref={pdfColumnRef}
+          className="relative min-w-0 lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]"
+        >
+          <PdfViewer
+            invoiceId={id}
+            downloadUrl={invoice.pdf_url ?? undefined}
+            onPageChange={setCurrentPdfPage}
+          />
+          {/* Find the rendered PDF page element so the stamp overlay
+              can position itself relative to actual page geometry, not
+              the surrounding viewport / scroll area. */}
+          <PageAnchor
+            columnRef={pdfColumnRef}
+            currentPage={currentPdfPage}
+            invoiceUrl={invoice.pdf_url ?? null}
+            onElement={setPageEl}
+          />
+          {/* Live stamp overlay. Only rendered when the user is editing
+              and on page 1 (the only page the stamp lands on). When
+              not editable (locked invoices), no handles, no drag —
+              just the static visual. */}
+          {pageEl && currentPdfPage === 1 && (
+            <StampPreviewOverlay
+              invoice={codingDraft}
+              containerRef={{ current: pageEl }}
+              position={stampPosition}
+              editable={showEditor}
+              onChange={(next) => {
+                setStampPosition(next);
+                if (next) {
+                  // Persist immediately on drag-release. PATCH is
+                  // idempotent and small enough that we don't need
+                  // to debounce.
+                  patch.mutate({ stamp_position: next });
+                }
+              }}
+            />
+          )}
+          {/* Reset-to-default button when the user has moved the stamp */}
+          {showEditor && stampPosition && pageEl && currentPdfPage === 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setStampPosition(null);
+                patch.mutate({ stamp_position: null });
+              }}
+              className="absolute bottom-3 right-3 z-30 text-[10px] uppercase tracking-wider font-bold bg-white/95 text-navy hover:bg-amber px-2 py-1 border border-navy shadow"
+            >
+              Reset stamp
+            </button>
           )}
         </div>
 
@@ -520,6 +577,57 @@ function InvoiceDetailPage() {
       />
     </>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Page anchor — observes the column for the rendered PDF page element
+// so the stamp overlay can position itself relative to actual page
+// geometry. react-pdf's <Page> mounts asynchronously and re-mounts on
+// scale/page changes, so we re-query whenever pdf state shifts.
+// ──────────────────────────────────────────────────────────────────────────
+
+function PageAnchor({
+  columnRef,
+  currentPage,
+  invoiceUrl,
+  onElement,
+}: {
+  columnRef: React.RefObject<HTMLDivElement | null>;
+  currentPage: number;
+  invoiceUrl: string | null;
+  onElement: (el: HTMLElement | null) => void;
+}) {
+  // Re-find the page element whenever the PDF re-renders. We watch for
+  // the data-pdf-page attribute that PdfViewer sets on the wrapper
+  // around <Page>.
+  useEffect(() => {
+    const root = columnRef.current;
+    if (!root) return;
+
+    let raf = 0;
+    const tick = () => {
+      const el = root.querySelector<HTMLElement>(`[data-pdf-page="${currentPage}"]`);
+      onElement(el);
+    };
+    // Initial probe
+    tick();
+    // Plus a couple of polls in case the canvas takes a few ms to mount
+    raf = window.setTimeout(tick, 100) as unknown as number;
+    const raf2 = window.setTimeout(tick, 400) as unknown as number;
+
+    // And a MutationObserver to catch async swaps (page change, scale
+    // change → react-pdf rebuilds the canvas)
+    const obs = new MutationObserver(tick);
+    obs.observe(root, { childList: true, subtree: true });
+
+    return () => {
+      window.clearTimeout(raf);
+      window.clearTimeout(raf2);
+      obs.disconnect();
+    };
+  }, [columnRef, currentPage, invoiceUrl, onElement]);
+
+  return null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

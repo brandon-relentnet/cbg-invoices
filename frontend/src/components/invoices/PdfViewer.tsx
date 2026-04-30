@@ -29,15 +29,22 @@ interface PdfViewerProps {
   invoiceId: string;
   /** Signed R2 URL used only for "open in new tab" (no auth needed). */
   downloadUrl?: string;
+  /** Fired when the user navigates between pages. Used by the parent
+   *  to hide overlays (the AP stamp preview only renders on page 1). */
+  onPageChange?: (page: number) => void;
 }
 
-export function PdfViewer({ invoiceId, downloadUrl }: PdfViewerProps) {
+export function PdfViewer({ invoiceId, downloadUrl, onPageChange }: PdfViewerProps) {
   const { getAccessToken } = useLogto();
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onPageChange?.(page);
+  }, [page, onPageChange]);
 
   // Memoize options to avoid unnecessary reloads
   const options = useMemo(
@@ -155,13 +162,18 @@ export function PdfViewer({ invoiceId, downloadUrl }: PdfViewerProps) {
             error={<ErrorFallback downloadUrl={downloadUrl} />}
             options={options}
           >
-            <Page
-              pageNumber={page}
-              scale={scale}
-              renderAnnotationLayer={false}
-              renderTextLayer={false}
-              className="shadow-2xl"
-            />
+            {/* data-pdf-page is read by the route page to anchor the
+                interactive stamp overlay relative to this rendered
+                page (not the surrounding viewport / scroll area). */}
+            <div data-pdf-page={page} className="relative">
+              <Page
+                pageNumber={page}
+                scale={scale}
+                renderAnnotationLayer={false}
+                renderTextLayer={false}
+                className="shadow-2xl"
+              />
+            </div>
           </Document>
         ) : (
           <div className="text-stone py-12">Loading PDF…</div>

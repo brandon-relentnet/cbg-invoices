@@ -96,6 +96,8 @@ class _InvoiceBase(BaseModel):
     assigned_to_name: str | None = None
     assigned_at: datetime | None = None
 
+    stamp_position: dict | None = None
+
 
 class InvoiceListItem(_InvoiceBase):
     """Summary fields for the queue list."""
@@ -137,6 +139,11 @@ class InvoicePatch(BaseModel):
     cost_code: str | None = None
     coding_date: date | None = None
     approver: str | None = None
+
+    # Stamp placement on the QBO attachment. Schema:
+    # {x: float, y: float, width: float} where each is a fraction of
+    # the page (0–1, top-anchored). Set to null to reset to default.
+    stamp_position: dict | None = None
 
 
 class RejectInvoiceRequest(BaseModel):

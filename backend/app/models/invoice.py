@@ -128,3 +128,9 @@ class Invoice(Base):
     assigned_to_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     assigned_to_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Per-invoice override for where the AP stamp gets placed on page 1
+    # of the QBO attachment. NULL = use the default (top-right, 24pt
+    # margin). Schema: {"x": float, "y": float, "width": float} — all
+    # fractions of the page (top-anchored). See alembic 0008.
+    stamp_position: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -58,6 +58,23 @@ export interface Invoice {
   assigned_to_email: string | null;
   assigned_to_name: string | null;
   assigned_at: string | null;
+
+  /** Per-invoice override for where the AP stamp lands on the QBO
+   *  attachment. All values are fractions of the page (top-anchored).
+   *  Null = use default top-right placement. */
+  stamp_position: StampPosition | null;
+}
+
+export interface StampPosition {
+  /** Distance from page LEFT edge to stamp's left edge, as a fraction
+   *  of page width (0–1). */
+  x: number;
+  /** Distance from page TOP edge to stamp's top edge, as a fraction of
+   *  page height (0–1). */
+  y: number;
+  /** Stamp width as a fraction of page width. Height is derived from
+   *  the stamp's natural aspect ratio (~2.29:1). */
+  width: number;
 }
 
 export interface InvoiceListResponse {
