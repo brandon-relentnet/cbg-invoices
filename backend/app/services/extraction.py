@@ -48,7 +48,11 @@ MAX_PAGES = 8
 # pages we always include from the trailing end so we don't miss totals.
 TRAILER_PAGES = 2
 TARGET_WIDTH_PX = 2048
-MAX_TOKENS = 4096
+# Output cap for Claude's JSON response. We're billed for actual tokens
+# used, not the cap — so this is purely safety headroom for invoices
+# with many line items + verbose descriptions. The Silvercote 34-line
+# acknowledgement order can hit ~8K tokens; 16K leaves room for outliers.
+MAX_TOKENS = 16384
 # Cap simultaneous extractions to keep memory pressure predictable. Each
 # render can spike to ~150–250MB during PDF→PNG conversion; running more
 # than two at once on a small Coolify container often triggers OOM.

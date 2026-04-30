@@ -54,6 +54,18 @@ Rules:
   surcharges, or rounding that the per-line amounts do not capture.
   If the totals block isn't visible, return null for those three
   fields rather than estimating.
+- Line item descriptions should be CONCISE — aim for ~80 characters,
+  hard cap at 160. Vendor invoices often print each line as a
+  three-line block (SKU on line 1, product description on line 2,
+  delivery location on line 3). Keep the SKU/product code and a
+  short readable description; drop verbose location/installation
+  notes. Example:
+    Source: "R25VRRWH : R-25 8\\" SINGLE LAYER PSP VRR+\\nR25 PSP VRR+
+            36\\" X 25' 2-9 in Tab(s) (75 SF) @ Bay Enclosure @
+            ROOF1 @ 2-9 in Tabs Tab\\nBay Enclosure Roof - Ridge"
+    Good:   "R25VRRWH — R-25 8\\" PSP VRR+ 36\\" X 25' (75 SF)"
+  Verbose descriptions exhaust the token budget on long invoices and
+  produce truncated JSON.
 - Dates must be ISO 8601 (YYYY-MM-DD). If only month/year shown, return null.
 - If the document does not appear to be an invoice, set all fields to null and
   put an explanation in "notes".
