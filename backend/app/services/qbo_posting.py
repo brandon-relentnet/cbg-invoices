@@ -246,41 +246,63 @@ def _build_lines(
         for li in usable:
             amount = (li["amount_cents"] or 0) / 100
             description = (li.get("description") or "").strip() or None
-            detail: dict[str, Any] = {"AccountRef": {"value": default_account_id}}
-            if project and project.qbo_type == "Customer":
-                detail["CustomerRef"] = {"value": project.qbo_id}
-                detail["BillableStatus"] = "NotBillable"
-            if project and project.qbo_type == "Class":
-                detail["ClassRef"] = {"value": project.qbo_id}
             line: dict[str, Any] = {
                 "DetailType": "AccountBasedExpenseLineDetail",
                 "Amount": round(amount, 2),
-                "AccountBasedExpenseLineDetail": detail,
+                "AccountBasedExpenseLineDetail": _line_detail(project, default_account_id),
             }
             if description:
                 line["Description"] = description[:4000]
             lines.append(line)
+
+        # Extracted lines represent the pre-tax breakdown; tax is tracked
+        # separately on the invoice. Append it as its own expense line so
+        # the QBO bill total matches the invoice total. Allocate the tax
+        # to the same project as the rest of the bill, so job costing
+        # captures it too.
+        tax = (invoice.tax_cents or 0) / 100
+        if tax > 0:
+            lines.append(
+                {
+                    "DetailType": "AccountBasedExpenseLineDetail",
+                    "Amount": round(tax, 2),
+                    "Description": "Sales Tax",
+                    "AccountBasedExpenseLineDetail": _line_detail(
+                        project, default_account_id
+                    ),
+                }
+            )
         return lines
 
-    # Fallback: single line for the full total
+    # Fallback: single line for the full total. total_cents already
+    # includes any tax, so no separate tax line is needed here.
     total = (invoice.total_cents or 0) / 100
     if total <= 0:
         raise ValueError("Invoice has no total and no line items — can't build Bill")
-    detail = {"AccountRef": {"value": default_account_id}}
-    if project and project.qbo_type == "Customer":
-        detail["CustomerRef"] = {"value": project.qbo_id}
-        detail["BillableStatus"] = "NotBillable"
-    if project and project.qbo_type == "Class":
-        detail["ClassRef"] = {"value": project.qbo_id}
     lines.append(
         {
             "DetailType": "AccountBasedExpenseLineDetail",
             "Amount": round(total, 2),
             "Description": f"Invoice {invoice.invoice_number or invoice.id}",
-            "AccountBasedExpenseLineDetail": detail,
+            "AccountBasedExpenseLineDetail": _line_detail(project, default_account_id),
         }
     )
     return lines
+
+
+def _line_detail(project: Project | None, default_account_id: str) -> dict[str, Any]:
+    """Build the AccountBasedExpenseLineDetail dict for one bill line.
+
+    Centralised so every line (including the appended tax line) gets the
+    same project / class allocation.
+    """
+    detail: dict[str, Any] = {"AccountRef": {"value": default_account_id}}
+    if project and project.qbo_type == "Customer":
+        detail["CustomerRef"] = {"value": project.qbo_id}
+        detail["BillableStatus"] = "NotBillable"
+    if project and project.qbo_type == "Class":
+        detail["ClassRef"] = {"value": project.qbo_id}
+    return detail
 
 
 def _compose_private_note(invoice: Invoice) -> str:
