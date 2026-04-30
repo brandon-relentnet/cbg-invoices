@@ -4,8 +4,11 @@ import type { Invoice, LineItem, Project, Vendor } from "@/types";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
+import { Combobox } from "@/components/ui/Combobox";
+import { StampPreview } from "@/components/invoices/StampPreview";
 import { formatCents, formatDollarsInput, parseDollars } from "@/lib/format";
 import type { InvoicePatchPayload } from "@/lib/invoices";
+import { groupByField, useCodingOptions } from "@/lib/codingOptions";
 
 interface Props {
   invoice: Invoice;
@@ -102,6 +105,11 @@ function toPatch(s: FormState): InvoicePatchPayload {
 
 export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disabled }: Props) {
   const [form, setForm] = useState<FormState>(() => fromInvoice(invoice));
+  const codingOptionsQuery = useCodingOptions();
+  const codingGroups = useMemo(
+    () => groupByField(codingOptionsQuery.data?.options),
+    [codingOptionsQuery.data],
+  );
 
   // Re-sync from server when the invoice id changes (new invoice opened)
   // and when status flips from extracting→ready_for_review (fresh extraction finished)
@@ -210,38 +218,61 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
             cost-code allocation in QBO and live audit. Sometimes auto-
             extracted from the PDF markup, sometimes typed manually. */}
         <FormSection title="Cambridge coding">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Input
-              label="Job no."
-              labelTone="quiet"
-              value={form.job_number}
-              onChange={(e) => update("job_number", e.target.value)}
-              placeholder="e.g. 25-11-04"
-              className="font-mono"
-            />
-            <Input
-              label="Cost code"
-              labelTone="quiet"
-              value={form.cost_code}
-              onChange={(e) => update("cost_code", e.target.value)}
-              placeholder='e.g. 01-520 "O"'
-              className="font-mono"
-            />
-            <Input
-              label="Coding date"
-              labelTone="quiet"
-              type="date"
-              value={form.coding_date}
-              onChange={(e) => update("coding_date", e.target.value)}
-            />
-            <Input
-              label="Approver"
-              labelTone="quiet"
-              value={form.approver}
-              onChange={(e) => update("approver", e.target.value)}
-              placeholder="e.g. jwh"
-              className="font-mono uppercase"
-            />
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-start">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
+              <Combobox
+                label="Job no."
+                labelTone="quiet"
+                value={form.job_number}
+                onChange={(v) => update("job_number", v)}
+                options={codingGroups.job_number}
+                placeholder="e.g. 25-11-04"
+                name="job_number"
+                disabled={disabled}
+              />
+              <Combobox
+                label="Cost code"
+                labelTone="quiet"
+                value={form.cost_code}
+                onChange={(v) => update("cost_code", v)}
+                options={codingGroups.cost_code}
+                placeholder='e.g. 01-520 "O"'
+                name="cost_code"
+                disabled={disabled}
+              />
+              <Input
+                label="Coding date"
+                labelTone="quiet"
+                type="date"
+                value={form.coding_date}
+                onChange={(e) => update("coding_date", e.target.value)}
+                disabled={disabled}
+              />
+              <Combobox
+                label="Approver"
+                labelTone="quiet"
+                value={form.approver}
+                onChange={(v) => update("approver", v)}
+                options={codingGroups.approver}
+                placeholder="e.g. jwh"
+                name="approver"
+                disabled={disabled}
+              />
+            </div>
+            {/* Live preview of the stamp that gets baked into the QBO
+                attachment at post time. Hidden on small screens to keep
+                form input ergonomics clean; the preview is auxiliary,
+                not blocking. */}
+            <div className="hidden lg:block flex-shrink-0">
+              <StampPreview
+                invoice={{
+                  job_number: form.job_number,
+                  cost_code: form.cost_code,
+                  coding_date: form.coding_date || null,
+                  approver: form.approver,
+                }}
+              />
+            </div>
           </div>
         </FormSection>
 

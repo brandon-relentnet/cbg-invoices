@@ -28,7 +28,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.project import Project
 from app.models.qbo_token import QboToken
 from app.models.vendor import Vendor
-from app.services import audit, qbo_client, storage
+from app.services import audit, qbo_client, stamp, storage
 
 log = logging.getLogger(__name__)
 
@@ -109,9 +109,39 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
             invoice.qbo_bill_id,
         )
 
-    # Attach the PDF
+    # Attach the PDF — stamped with the AP coding markup if all four
+    # fields are present. We download the original from R2, compose the
+    # stamp on the first page, and upload the stamped version to QBO.
+    # The R2 original stays untouched (audit-trail integrity).
     log.info("Uploading PDF attachment for bill %s", invoice.qbo_bill_id)
     pdf_bytes = await storage.download_pdf(invoice.pdf_storage_key)
+    if stamp.has_required_fields(
+        invoice.job_number,
+        invoice.cost_code,
+        invoice.coding_date,
+        invoice.approver,
+    ):
+        try:
+            pdf_bytes = await stamp.stamp_invoice_pdf(
+                pdf_bytes,
+                stamp.StampFields(
+                    job_number=invoice.job_number or "",
+                    cost_code=invoice.cost_code or "",
+                    coding_date=invoice.coding_date,  # type: ignore[arg-type]
+                    approver=invoice.approver or "",
+                ),
+            )
+            log.info("Stamped invoice %s with AP coding markup", invoice_id)
+        except Exception as exc:  # noqa: BLE001
+            # Stamping failures should never block posting — the original
+            # PDF still goes up, the audit log captures the warning.
+            log.warning("Stamping failed for %s, attaching original: %s", invoice_id, exc)
+            await audit.record_system(
+                session,
+                action="invoice_stamp_failed",
+                invoice_id=invoice_id,
+                message=str(exc),
+            )
     await qbo_client.upload_attachable_for_bill(
         session,
         bill_id=invoice.qbo_bill_id,

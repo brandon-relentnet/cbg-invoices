@@ -135,3 +135,20 @@ export interface AccessRequestListResponse {
   requests: AccessRequest[];
   pending_count: number;
 }
+
+// AP coding dropdown options (admin-managed)
+export type CodingField = "job_number" | "cost_code" | "approver";
+
+export interface CodingOption {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  field: CodingField;
+  value: string;
+  label: string | null;
+  active: boolean;
+}
+
+export interface CodingOptionListResponse {
+  options: CodingOption[];
+}

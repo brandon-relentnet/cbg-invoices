@@ -307,6 +307,34 @@ def _ensure_approvable(invoice: Invoice) -> None:
         raise HTTPException(status_code=400, detail="Total amount is required before approval")
 
 
+def _ensure_postable(invoice: Invoice) -> None:
+    """Raise 4xx if the invoice can't be posted to QBO yet.
+
+    All four Cambridge AP coding fields must be filled in — the stamp
+    that's baked into the QBO Bill attachment can't be generated
+    otherwise. Approval doesn't require these (you can approve a vendor +
+    total without coding), but posting does.
+    """
+    missing = []
+    if not (invoice.job_number or "").strip():
+        missing.append("job number")
+    if not (invoice.cost_code or "").strip():
+        missing.append("cost code")
+    if invoice.coding_date is None:
+        missing.append("coding date")
+    if not (invoice.approver or "").strip():
+        missing.append("approver")
+    if missing:
+        joined = ", ".join(missing)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cambridge AP coding incomplete — fill in {joined} "
+                "before posting to QBO."
+            ),
+        )
+
+
 def _mark_approved(invoice: Invoice, user: CurrentUser) -> None:
     invoice.status = InvoiceStatus.APPROVED
     invoice.reviewed_by = user.id
@@ -364,6 +392,7 @@ async def post_invoice_to_qbo(
             status_code=409,
             detail="Only approved invoices can be posted. Approve it first.",
         )
+    _ensure_postable(invoice)
 
     await audit.record(
         session,
@@ -392,6 +421,7 @@ async def approve_and_post(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _ensure_approvable(invoice)
+    _ensure_postable(invoice)
 
     _mark_approved(invoice, user)
     await audit.record(

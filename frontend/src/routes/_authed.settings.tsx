@@ -1,11 +1,18 @@
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { CheckCircleIcon, XCircleIcon } from "@heroicons/react/24/solid";
-import { ArrowPathIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowPathIcon,
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
 import { PageHeader, SectionLabel } from "@/components/layout/AppShell";
 import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import {
   useConnectQbo,
@@ -16,6 +23,16 @@ import {
   useSyncVendors,
   useUpdateQboSettings,
 } from "@/lib/qbo";
+import {
+  FIELD_LABELS,
+  groupByField,
+  useCodingOptions,
+  useCreateCodingOption,
+  useDeleteCodingOption,
+  usePatchCodingOption,
+} from "@/lib/codingOptions";
+import { useMe, ROLE_RANK } from "@/lib/users";
+import type { CodingField, CodingOption } from "@/types";
 import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_authed/settings")({
@@ -216,8 +233,321 @@ function SettingsPage() {
             </CardBody>
           </Card>
         )}
+
+        {/* AP coding options — admin/owner only. PMs see the dropdowns
+            on the review screen; this is where the curated list lives. */}
+        <APCodingSection />
       </div>
     </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AP Coding section — manages dropdown options for job/cost code/approver.
+// Visible to admins+. Members see a brief notice instead.
+// ──────────────────────────────────────────────────────────────────────────
+
+const FIELDS: { key: CodingField; description: string }[] = [
+  {
+    key: "job_number",
+    description: "Cambridge job codes (e.g. 25-11-04). Reusable across projects.",
+  },
+  {
+    key: "cost_code",
+    description: 'Cost classification (e.g. 01-520 "O"). Maps to internal accounting.',
+  },
+  {
+    key: "approver",
+    description: "Initials of whoever signs off the markup (e.g. jwh).",
+  },
+];
+
+function APCodingSection() {
+  const me = useMe();
+  const role = me.data?.role ?? "member";
+  const canManage = ROLE_RANK[role] >= ROLE_RANK.admin;
+
+  const { data, isLoading } = useCodingOptions();
+  const grouped = groupByField(
+    (data?.options ?? []).filter((o) => o.active || canManage),
+  );
+
+  return (
+    <Card accent="left">
+      <CardHeader>
+        <h2 className="font-display text-2xl text-navy">AP coding options</h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Curated dropdowns shown when reviewing invoices. PMs can still
+          enter custom values, but pre-defined options reduce typos and
+          keep codes consistent.
+        </p>
+      </CardHeader>
+      <CardBody>
+        {!canManage && (
+          <p className="text-sm text-slate-500">
+            Admins manage these options. You'll see the dropdowns when reviewing
+            invoices.
+          </p>
+        )}
+        {canManage && (
+          <div className="space-y-6">
+            {FIELDS.map((f) => (
+              <FieldGroup
+                key={f.key}
+                field={f.key}
+                description={f.description}
+                options={grouped[f.key]}
+                loading={isLoading}
+              />
+            ))}
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function FieldGroup({
+  field,
+  description,
+  options,
+  loading,
+}: {
+  field: CodingField;
+  description: string;
+  options: CodingOption[];
+  loading: boolean;
+}) {
+  const create = useCreateCodingOption();
+  const [adding, setAdding] = useState(false);
+  const [newValue, setNewValue] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  function reset() {
+    setAdding(false);
+    setNewValue("");
+    setNewLabel("");
+    setError(null);
+  }
+
+  async function handleAdd() {
+    setError(null);
+    const v = newValue.trim();
+    if (!v) {
+      setError("Value is required");
+      return;
+    }
+    try {
+      await create.mutateAsync({
+        field,
+        value: v,
+        label: newLabel.trim() || null,
+      });
+      reset();
+    } catch (e) {
+      setError((e as Error).message || "Failed to add");
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <div>
+          <SectionLabel>{FIELD_LABELS[field]}</SectionLabel>
+          <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+        </div>
+        {!adding && (
+          <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
+            <PlusIcon className="h-4 w-4" />
+            Add
+          </Button>
+        )}
+      </div>
+
+      {/* Add row */}
+      {adding && (
+        <div className="bg-stone/40 border border-amber/30 p-3 mb-3 space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto] gap-2 items-end">
+            <Input
+              label="Value"
+              labelTone="quiet"
+              value={newValue}
+              onChange={(e) => setNewValue(e.target.value)}
+              placeholder={field === "approver" ? "jwh" : "25-11-04"}
+              className="font-mono"
+              size="sm"
+            />
+            <Input
+              label="Label (optional)"
+              labelTone="quiet"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="e.g. Lobby Renovation"
+              size="sm"
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAdd}
+                loading={create.isPending}
+                disabled={!newValue.trim()}
+              >
+                Save
+              </Button>
+              <Button variant="ghost" size="sm" onClick={reset}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+        </div>
+      )}
+
+      {/* Existing options */}
+      {loading && (
+        <p className="text-xs text-slate-500">Loading…</p>
+      )}
+      {!loading && options.length === 0 && !adding && (
+        <p className="text-xs text-slate-500 italic">
+          No options yet. Click Add to create one.
+        </p>
+      )}
+      {options.length > 0 && (
+        <ul className="divide-y divide-stone/60 border border-stone/60">
+          {options.map((opt) => (
+            <CodingOptionRow key={opt.id} option={opt} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function CodingOptionRow({ option }: { option: CodingOption }) {
+  const patch = usePatchCodingOption();
+  const del = useDeleteCodingOption();
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState(option.value);
+  const [l, setL] = useState(option.label ?? "");
+
+  async function save() {
+    await patch.mutateAsync({
+      id: option.id,
+      patch: { value: v.trim(), label: l.trim() || null },
+    });
+    setEditing(false);
+  }
+
+  async function toggleActive() {
+    await patch.mutateAsync({
+      id: option.id,
+      patch: { active: !option.active },
+    });
+  }
+
+  async function handleDelete() {
+    if (
+      !window.confirm(
+        `Delete "${option.value}"? Existing invoices keep their value but PMs won't see it in the dropdown.`,
+      )
+    ) {
+      return;
+    }
+    await del.mutateAsync(option.id);
+  }
+
+  if (editing) {
+    return (
+      <li className="px-3 py-2 bg-amber/5">
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto] gap-2 items-end">
+          <Input
+            label="Value"
+            labelTone="quiet"
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            className="font-mono"
+            size="sm"
+          />
+          <Input
+            label="Label"
+            labelTone="quiet"
+            value={l}
+            onChange={(e) => setL(e.target.value)}
+            size="sm"
+          />
+          <div className="flex gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={save}
+              loading={patch.isPending}
+              disabled={!v.trim()}
+            >
+              Save
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditing(false);
+                setV(option.value);
+                setL(option.label ?? "");
+              }}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className="px-3 py-2 flex items-center justify-between gap-3 hover:bg-stone/30">
+      <div className="min-w-0 flex-1">
+        <div className="font-mono text-sm text-graphite">
+          {option.value}
+          {!option.active && (
+            <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-400">
+              hidden
+            </span>
+          )}
+        </div>
+        {option.label && (
+          <div className="text-xs text-slate-500 truncate">{option.label}</div>
+        )}
+      </div>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <button
+          type="button"
+          onClick={toggleActive}
+          disabled={patch.isPending}
+          className="text-[10px] uppercase tracking-wider px-2 py-1 text-slate-500 hover:text-navy disabled:opacity-50"
+          title={option.active ? "Hide from dropdowns" : "Show in dropdowns"}
+        >
+          {option.active ? "Hide" : "Show"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="p-1.5 text-slate-500 hover:text-navy"
+          aria-label="Edit"
+        >
+          <PencilIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={del.isPending}
+          className="p-1.5 text-slate-500 hover:text-red-700 disabled:opacity-50"
+          aria-label="Delete"
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
+      </div>
+    </li>
   );
 }
 

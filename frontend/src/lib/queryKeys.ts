@@ -38,4 +38,9 @@ export const qk = {
     root: () => [...qk.all, "access-requests"] as const,
     list: () => [...qk.accessRequests.root(), "list"] as const,
   },
+
+  codingOptions: {
+    root: () => [...qk.all, "coding-options"] as const,
+    list: () => [...qk.codingOptions.root(), "list"] as const,
+  },
 } as const;
