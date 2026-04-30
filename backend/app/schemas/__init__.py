@@ -16,6 +16,11 @@ from app.schemas.invoice import (
 )
 from app.schemas.project import ProjectOut
 from app.schemas.qbo import QboStatus
+from app.schemas.trusted_domain import (
+    TrustedDomainCreate,
+    TrustedDomainListResponse,
+    TrustedDomainOut,
+)
 from app.schemas.vendor import VendorOut
 
 __all__ = [
@@ -32,5 +37,8 @@ __all__ = [
     "ProjectOut",
     "QboStatus",
     "RejectInvoiceRequest",
+    "TrustedDomainCreate",
+    "TrustedDomainListResponse",
+    "TrustedDomainOut",
     "VendorOut",
 ]

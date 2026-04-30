@@ -21,6 +21,7 @@ from app.routers import (
     invoices,
     projects,
     qbo,
+    trusted_domains,
     users,
     vendors,
     webhooks,
@@ -108,3 +109,4 @@ app.include_router(audit.router, prefix=f"{API_PREFIX}/audit")
 app.include_router(users.router, prefix=f"{API_PREFIX}/users")
 app.include_router(access_requests.router, prefix=f"{API_PREFIX}/access-requests")
 app.include_router(coding_options.router, prefix=f"{API_PREFIX}/coding-options")
+app.include_router(trusted_domains.router, prefix=f"{API_PREFIX}/trusted-domains")

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import Project
 from app.models.qbo_token import QboToken
 from app.models.vendor import Vendor
-from app.services import qbo_client
+from app.services import qbo_client, trusted_domains
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +56,21 @@ async def sync_vendors(session: AsyncSession) -> int:
     if token:
         token.last_vendor_sync_at = now
     await session.flush()
+
+    # Refresh the email-domain allowlist from the freshly-synced vendor
+    # emails. Failures here are non-fatal — vendor sync should still
+    # report success even if the allowlist update has a hiccup.
+    try:
+        report = await trusted_domains.sync_from_vendor_emails(session)
+        log.info(
+            "Trusted domains refreshed from vendor emails: added=%d kept=%d removed=%d",
+            report["added"],
+            report["kept"],
+            report["removed"],
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("Trusted-domain refresh failed during vendor sync")
+
     log.info("Synced %d vendors from QBO", count)
     return count
 
