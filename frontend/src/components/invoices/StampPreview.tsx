@@ -101,6 +101,12 @@ export function StampPreviewOverlay({
   // re-derive from `effective` whenever the container size changes.
   const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
 
+  // Track whether the user is actively dragging so we can skip the
+  // resync effect — otherwise a parent re-render mid-drag (e.g. an
+  // invoiceQuery 10s poll) would clobber the in-flight DOM updates
+  // back to whatever React's `rect` state still holds.
+  const draggingRef = useRef(false);
+
   // Re-compute pixel rect whenever the container resizes or position
   // updates (from PATCH callback round-trips).
   useEffect(() => {
@@ -108,6 +114,7 @@ export function StampPreviewOverlay({
     const el = containerRef.current;
 
     function recompute() {
+      if (draggingRef.current) return;
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) return;
       setRect({
@@ -122,11 +129,14 @@ export function StampPreviewOverlay({
     return () => obs.disconnect();
   }, [containerRef, effective.x, effective.y, effective.width]);
 
-  // Drag/resize gestures use window-scoped listeners during the active
-  // drag instead of element-scoped pointer capture. Window listeners
-  // are bulletproof — they fire even if the cursor strays outside the
-  // PDF page area, and they're not affected by React's synthetic event
-  // pooling, portal boundaries, or pointer-capture quirks.
+  // Drag/resize uses DIRECT DOM MANIPULATION on the wrapper element
+  // during the active gesture. We sync React state only on release.
+  // Why: previous attempts (React state per-move + portal + setPointerCapture
+  // / window listeners) all "looked right" but the visual stamp never moved
+  // in production. Bypassing React reconciliation eliminates an entire class
+  // of "state set but DOM not updated" failure modes — the DOM is updated
+  // on every pointermove tick directly via wrapper.style.* writes.
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const rectRef = useRef(rect);
   rectRef.current = rect;
 
@@ -152,6 +162,15 @@ export function StampPreviewOverlay({
     };
   }
 
+  function applyToDom(next: { left: number; top: number; width: number }) {
+    const el = wrapperRef.current;
+    if (!el) return;
+    el.style.left = `${next.left}px`;
+    el.style.top = `${next.top}px`;
+    el.style.width = `${next.width}px`;
+    rectRef.current = next;
+  }
+
   function startDrag(
     e: ReactPointerEvent<HTMLElement>,
     kind: "move" | "resize",
@@ -159,12 +178,14 @@ export function StampPreviewOverlay({
     if (!editable || !rect) return;
     e.preventDefault();
     e.stopPropagation();
+    draggingRef.current = true;
 
     const startX = e.clientX;
     const startY = e.clientY;
     const start = { ...rect };
 
     function onMove(ev: PointerEvent) {
+      ev.preventDefault();
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
       let next: { left: number; top: number; width: number };
@@ -176,20 +197,23 @@ export function StampPreviewOverlay({
         const proposed = start.width + Math.max(dx, dy * STAMP_ASPECT);
         next = clampToContainer(start.left, start.top, proposed);
       }
-      setRect(next);
+      applyToDom(next);
     }
 
     function onUp() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      draggingRef.current = false;
       const final = rectRef.current;
       if (final) {
+        // Sync React state to match DOM, then notify parent.
+        setRect(final);
         onChange(pixelsToFrac(final));
       }
     }
 
-    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
   }
@@ -209,6 +233,7 @@ export function StampPreviewOverlay({
   // 1:1 to page coordinates.
   const overlay = (
     <div
+      ref={wrapperRef}
       className={cn(
         "absolute select-none",
         editable ? "cursor-move" : "pointer-events-none",
