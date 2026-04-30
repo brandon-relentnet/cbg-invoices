@@ -6,20 +6,21 @@
  * Two modes:
  *
  *   - "static" — read-only render. Used in the InvoiceSummary card.
- *   - "interactive" — drag to move, bottom-right corner to resize.
- *     Used over the PDF viewer on the review screen so PMs can place
- *     the stamp where it makes sense for that vendor's layout.
+ *   - "interactive" — drag to move (Motion's drag system, GPU-accelerated
+ *     transforms, smooth at 60fps even on modest hardware). Resize via
+ *     a corner handle that drives motion values for width + height
+ *     directly. Aspects are FREE — width and height move independently
+ *     so the user can make tall/skinny or wide/short stamps as needed.
  *
- * The interactive mode uses fractional (0–1) coordinates of its anchor
- * container so the position survives resize / zoom of the rendered PDF
- * without recalculation. The route page maps those fractions to PDF
- * points server-side at post time.
- *
- * Aspect ratio is locked to the natural ~2.29:1 the reportlab version
- * uses, so resizing only changes width — height tracks proportionally.
+ * The interactive mode portals into the rendered PDF page element so
+ * its `position: absolute` coordinates map 1:1 to page coordinates.
+ * Every value persisted is a fraction of the page so the position
+ * survives PDF zoom / browser resize / etc. The route page maps those
+ * fractions to PDF points server-side at post time.
  */
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { motion, useMotionValue, useTransform } from "motion/react";
 import { ArrowsPointingInIcon } from "@heroicons/react/24/outline";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
@@ -35,6 +36,7 @@ export interface StampPosition {
   x: number;
   y: number;
   width: number;
+  height?: number;
 }
 
 interface BaseProps {
@@ -45,9 +47,8 @@ interface BaseProps {
 /** Read-only render — used in the InvoiceSummary card. */
 export function StampPreview({ invoice, className }: BaseProps) {
   return (
-    <StampBody
+    <StaticStampBody
       invoice={invoice}
-      style={{ width: 220 }}
       className={cn("shadow-lg", className)}
     />
   );
@@ -66,27 +67,35 @@ interface InteractiveProps extends BaseProps {
   editable?: boolean;
 }
 
-const DEFAULT_WIDTH_FRAC = 0.32;     // 32% of page width = ~196pt on Letter
-const DEFAULT_MARGIN_FRAC = 0.03;    // 3% page margin from top + right
-const STAMP_ASPECT = 220 / 96;       // matches reportlab's _STAMP_ASPECT
+const DEFAULT_WIDTH_FRAC = 0.32;
+const DEFAULT_MARGIN_FRAC = 0.03;
+const STAMP_ASPECT = 220 / 96; // matches the reportlab default
+const DEFAULT_HEIGHT_FRAC_FALLBACK = 0.08; // used when we can't derive
 
-const MIN_WIDTH_FRAC = 0.12;
-const MAX_WIDTH_FRAC = 0.6;
+const MIN_WIDTH_FRAC = 0.1;
+const MAX_WIDTH_FRAC = 0.7;
+const MIN_HEIGHT_FRAC = 0.04;
+const MAX_HEIGHT_FRAC = 0.5;
 
-function defaultPosition(): StampPosition {
+function defaultPosition(pageWidth: number, pageHeight: number): StampPosition {
+  // Default size: 32% page width × ratio-derived height.
+  const width = DEFAULT_WIDTH_FRAC;
+  const heightPx = (DEFAULT_WIDTH_FRAC * pageWidth) / STAMP_ASPECT;
+  const height = pageHeight > 0 ? heightPx / pageHeight : DEFAULT_HEIGHT_FRAC_FALLBACK;
   return {
-    x: 1 - DEFAULT_WIDTH_FRAC - DEFAULT_MARGIN_FRAC,
+    x: 1 - width - DEFAULT_MARGIN_FRAC,
     y: DEFAULT_MARGIN_FRAC,
-    width: DEFAULT_WIDTH_FRAC,
+    width,
+    height,
   };
 }
 
 /**
  * Interactive draggable + resizable stamp overlay. Renders absolutely
- * within whatever container the caller scopes via containerRef.
- *
- * Position changes commit to onChange only on pointer-up so the parent
- * can debounce a server PATCH instead of firing on every move event.
+ * inside the page element via portal so positioning is in true page-
+ * coordinate space. Uses Motion for the drag (smooth, hardware-
+ * accelerated, takes care of bounds via dragConstraints) and a custom
+ * pointer-event handler on the corner for resize.
  */
 export function StampPreviewOverlay({
   invoice,
@@ -96,164 +105,159 @@ export function StampPreviewOverlay({
   editable = true,
   className,
 }: InteractiveProps) {
-  const effective = position ?? defaultPosition();
-  // Track pixel rect so the stamp doesn't lag behind drag events. We
-  // re-derive from `effective` whenever the container size changes.
-  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  // Container size, tracked so we can convert between pixel + fractional.
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
 
-  // Track whether the user is actively dragging so we can skip the
-  // resync effect — otherwise a parent re-render mid-drag (e.g. an
-  // invoiceQuery 10s poll) would clobber the in-flight DOM updates
-  // back to whatever React's `rect` state still holds.
-  const draggingRef = useRef(false);
+  // Motion values for x/y/width/height in PIXELS (relative to the page
+  // element). These drive the rendered transform/size every frame. They
+  // are kept in sync with `position` (parent prop) when it changes via
+  // a useEffect below; user gestures push values into them imperatively.
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const width = useMotionValue(0);
+  const height = useMotionValue(0);
 
-  // Re-compute pixel rect whenever the container resizes or position
-  // updates (from PATCH callback round-trips).
+  // Observe the container so we can size the stamp + reset on PDF zoom
   useEffect(() => {
-    if (!containerRef.current) return;
     const el = containerRef.current;
-
-    function recompute() {
-      if (draggingRef.current) return;
+    if (!el) return;
+    function measure() {
+      if (!el) return;
       const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      setRect({
-        left: effective.x * r.width,
-        top: effective.y * r.height,
-        width: effective.width * r.width,
-      });
+      if (r.width > 0 && r.height > 0) {
+        setContainerSize({ w: r.width, h: r.height });
+      }
     }
-    recompute();
-    const obs = new ResizeObserver(recompute);
+    measure();
+    const obs = new ResizeObserver(measure);
     obs.observe(el);
     return () => obs.disconnect();
-  }, [containerRef, effective.x, effective.y, effective.width]);
+  }, [containerRef]);
 
-  // Drag/resize uses DIRECT DOM MANIPULATION on the wrapper element
-  // during the active gesture. We sync React state only on release.
-  // Why: previous attempts (React state per-move + portal + setPointerCapture
-  // / window listeners) all "looked right" but the visual stamp never moved
-  // in production. Bypassing React reconciliation eliminates an entire class
-  // of "state set but DOM not updated" failure modes — the DOM is updated
-  // on every pointermove tick directly via wrapper.style.* writes.
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const rectRef = useRef(rect);
-  rectRef.current = rect;
+  // Sync motion values from the persisted position (or default) when
+  // the position prop changes or the container resizes. This is what
+  // makes the stamp follow PDF zoom + restore correctly on page load.
+  useEffect(() => {
+    if (!containerSize) return;
+    const { w, h } = containerSize;
+    const eff = position ?? defaultPosition(w, h);
+    const pixWidth = eff.width * w;
+    const pixHeight =
+      eff.height !== undefined ? eff.height * h : pixWidth / STAMP_ASPECT;
+    x.set(eff.x * w);
+    y.set(eff.y * h);
+    width.set(pixWidth);
+    height.set(pixHeight);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    containerSize?.w,
+    containerSize?.h,
+    position?.x,
+    position?.y,
+    position?.width,
+    position?.height,
+  ]);
 
-  function clampToContainer(left: number, top: number, width: number) {
-    if (!containerRef.current) return { left, top, width };
-    const r = containerRef.current.getBoundingClientRect();
-    const minW = r.width * MIN_WIDTH_FRAC;
-    const maxW = r.width * MAX_WIDTH_FRAC;
-    const w = Math.max(minW, Math.min(maxW, width));
-    const h = w / STAMP_ASPECT;
-    const l = Math.max(0, Math.min(r.width - w, left));
-    const t = Math.max(0, Math.min(r.height - h, top));
-    return { left: l, top: t, width: w };
+  function commitPosition() {
+    if (!containerSize) return;
+    onChange({
+      x: x.get() / containerSize.w,
+      y: y.get() / containerSize.h,
+      width: width.get() / containerSize.w,
+      height: height.get() / containerSize.h,
+    });
   }
 
-  function pixelsToFrac(px: { left: number; top: number; width: number }): StampPosition {
-    if (!containerRef.current) return effective;
-    const r = containerRef.current.getBoundingClientRect();
-    return {
-      x: px.left / r.width,
-      y: px.top / r.height,
-      width: px.width / r.width,
-    };
-  }
-
-  function applyToDom(next: { left: number; top: number; width: number }) {
-    const el = wrapperRef.current;
-    if (!el) return;
-    el.style.left = `${next.left}px`;
-    el.style.top = `${next.top}px`;
-    el.style.width = `${next.width}px`;
-    rectRef.current = next;
-  }
-
-  function startDrag(
-    e: ReactPointerEvent<HTMLElement>,
-    kind: "move" | "resize",
-  ) {
-    if (!editable || !rect) return;
+  // Resize handle — uses raw pointer events with window listeners
+  // because Motion's drag is for the parent container only.
+  function startResize(e: ReactPointerEvent<HTMLElement>) {
+    if (!editable || !containerSize) return;
     e.preventDefault();
     e.stopPropagation();
-    draggingRef.current = true;
-
     const startX = e.clientX;
     const startY = e.clientY;
-    const start = { ...rect };
+    const startW = width.get();
+    const startH = height.get();
+    const curX = x.get();
+    const curY = y.get();
+    const minW = containerSize.w * MIN_WIDTH_FRAC;
+    const maxW = containerSize.w * MAX_WIDTH_FRAC;
+    const minH = containerSize.h * MIN_HEIGHT_FRAC;
+    const maxH = containerSize.h * MAX_HEIGHT_FRAC;
 
     function onMove(ev: PointerEvent) {
       ev.preventDefault();
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
-      let next: { left: number; top: number; width: number };
-      if (kind === "move") {
-        next = clampToContainer(start.left + dx, start.top + dy, start.width);
-      } else {
-        // Resize from bottom-right. Width tracks the larger of the two
-        // axis-aligned deltas (locked aspect 2.29:1).
-        const proposed = start.width + Math.max(dx, dy * STAMP_ASPECT);
-        next = clampToContainer(start.left, start.top, proposed);
-      }
-      applyToDom(next);
+      // Clamp width so right edge doesn't run past the page
+      const nextW = Math.max(
+        minW,
+        Math.min(maxW, Math.min(startW + dx, containerSize!.w - curX)),
+      );
+      // Same for height
+      const nextH = Math.max(
+        minH,
+        Math.min(maxH, Math.min(startH + dy, containerSize!.h - curY)),
+      );
+      width.set(nextW);
+      height.set(nextH);
     }
-
     function onUp() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
-      draggingRef.current = false;
-      const final = rectRef.current;
-      if (final) {
-        // Sync React state to match DOM, then notify parent.
-        setRect(final);
-        onChange(pixelsToFrac(final));
-      }
+      commitPosition();
     }
-
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
   }
 
-  if (!rect || !containerRef.current) {
-    // Container hasn't measured yet (PDF still rendering). Don't paint.
-    return null;
-  }
+  // The body's font/spacing scales with the box width via a transform
+  // ratio. Keeps the stamp legible at every size.
+  const fontScale = useTransform(width, (w) => w / 220);
 
-  // CRITICAL: render the stamp as a CHILD of the PDF page element via
-  // a portal. Otherwise the stamp's `position: absolute` coordinates
-  // would be relative to whatever positioned ancestor exists in the
-  // route's DOM tree (the column wrapper), but our pixel math uses
-  // the page element's bounding box as the reference. Mismatch =
-  // stamp visually anchored to the wrong origin and drag updates
-  // appearing to "snap back". Portal-into-page makes left/top map
-  // 1:1 to page coordinates.
+  if (!containerSize || !containerRef.current) return null;
+
+  // Drag constraints — keep the stamp inside the page bounds. Motion
+  // computes max - element size for us when constraints is a ref, but
+  // we get tighter control passing the literal rect.
+  const constraints = {
+    left: 0,
+    top: 0,
+    right: Math.max(0, containerSize.w - width.get()),
+    bottom: Math.max(0, containerSize.h - height.get()),
+  };
+
   const overlay = (
-    <div
-      ref={wrapperRef}
+    <motion.div
+      drag={editable}
+      dragConstraints={constraints}
+      dragElastic={0}
+      dragMomentum={false}
+      onDragEnd={commitPosition}
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        x,
+        y,
+        width,
+        height,
+        zIndex: 20,
+        touchAction: editable ? "none" : "auto",
+      }}
       className={cn(
-        "absolute select-none",
+        "select-none",
         editable ? "cursor-move" : "pointer-events-none",
         className,
       )}
-      style={{
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        zIndex: 20,
-        // Disable the browser's native touch behaviors so a one-finger
-        // drag on mobile doesn't scroll the page underneath.
-        touchAction: editable ? "none" : "auto",
-      }}
-      onPointerDown={(e) => startDrag(e, "move")}
     >
-      <StampBody
+      <MotionStampBody
         invoice={invoice}
+        scale={fontScale}
         className={cn(
-          "shadow-lg",
+          "shadow-lg h-full",
           editable && "ring-2 ring-amber/30 hover:ring-amber",
         )}
       />
@@ -261,54 +265,48 @@ export function StampPreviewOverlay({
         <button
           type="button"
           aria-label="Resize stamp"
-          onPointerDown={(e) => startDrag(e, "resize")}
-          className="absolute -bottom-2 -right-2 flex h-5 w-5 items-center justify-center bg-navy text-stone shadow border border-stone cursor-nwse-resize hover:bg-amber hover:text-navy"
+          onPointerDown={startResize}
+          className="absolute -bottom-2 -right-2 flex h-5 w-5 items-center justify-center bg-navy text-stone shadow border border-stone cursor-nwse-resize hover:bg-amber hover:text-navy z-10"
           style={{ touchAction: "none" }}
         >
           <ArrowsPointingInIcon className="h-3 w-3" />
         </button>
       )}
-    </div>
+    </motion.div>
   );
 
   return createPortal(overlay, containerRef.current);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Visual body shared between static + interactive variants.
+// Visual body — two variants so we don't conditionally call hooks.
 // ──────────────────────────────────────────────────────────────────────────
 
-function StampBody({
+/** Static (no motion values), fixed 220px wide, intrinsic height.
+ *  Used by the read-only StampPreview in InvoiceSummary cards. */
+function StaticStampBody({
   invoice,
   className,
-  style,
 }: {
   invoice: CodingFields;
   className?: string;
-  style?: React.CSSProperties;
 }) {
-  const ready =
-    !!invoice.job_number?.trim() &&
-    !!invoice.cost_code?.trim() &&
-    !!invoice.coding_date &&
-    !!invoice.approver?.trim();
-
+  const ready = isReady(invoice);
   return (
     <div
+      style={{ width: 220 }}
       className={cn(
-        "bg-white border-2 select-none transition-colors",
+        "bg-white border-2 select-none transition-colors flex flex-col",
         ready ? "border-navy" : "border-slate-300",
         className,
       )}
-      style={style}
       aria-label="AP coding stamp preview"
-      title="Preview of the stamp that will be baked into the QBO attachment"
     >
-      <div className="bg-amber px-2 py-1 flex items-center justify-between text-[9px] font-bold tracking-widest text-navy">
+      <div className="bg-amber px-2 py-1 flex items-center justify-between font-bold tracking-widest text-navy text-[9px]">
         <span>CAMBRIDGE</span>
         <span>AP CODING</span>
       </div>
-      <div className="px-2 py-1.5 space-y-0.5">
+      <div className="px-2 py-1.5 space-y-0.5 text-[10px]">
         <Row label="JOB #" value={invoice.job_number} ready={ready} />
         <Row label="COST CD" value={invoice.cost_code} ready={ready} />
         <Row
@@ -327,6 +325,67 @@ function StampBody({
   );
 }
 
+/** Motion-driven body — fills its container, font sizes track a scale
+ *  motion value so the stamp stays legible at any user-chosen width.
+ *  Used by the interactive StampPreviewOverlay. */
+function MotionStampBody({
+  invoice,
+  className,
+  scale,
+}: {
+  invoice: CodingFields;
+  className?: string;
+  scale: ReturnType<typeof useMotionValue<number>>;
+}) {
+  const ready = isReady(invoice);
+  // Hooks must run unconditionally — useTransform reads `scale`
+  // unconditionally here.
+  const titleSize = useTransform(scale, (s) => `${9 * s}px`);
+  const labelSize = useTransform(scale, (s) => `${10 * s}px`);
+
+  return (
+    <motion.div
+      className={cn(
+        "bg-white border-2 select-none transition-colors flex flex-col h-full overflow-hidden",
+        ready ? "border-navy" : "border-slate-300",
+        className,
+      )}
+      aria-label="AP coding stamp preview"
+      title="Preview of the stamp that will be baked into the QBO attachment"
+    >
+      <motion.div
+        className="bg-amber px-2 py-1 flex items-center justify-between font-bold tracking-widest text-navy flex-shrink-0"
+        style={{ fontSize: titleSize }}
+      >
+        <span>CAMBRIDGE</span>
+        <span>AP CODING</span>
+      </motion.div>
+      <motion.div
+        className="px-2 py-1.5 flex-1 flex flex-col justify-around"
+        style={{ fontSize: labelSize }}
+      >
+        <Row label="JOB #" value={invoice.job_number} ready={ready} />
+        <Row label="COST CD" value={invoice.cost_code} ready={ready} />
+        <Row
+          label="DATE"
+          value={invoice.coding_date ? formatDate(invoice.coding_date) : null}
+          ready={ready}
+        />
+        <Row label="APPROVED" value={invoice.approver} ready={ready} />
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function isReady(invoice: CodingFields): boolean {
+  return (
+    !!invoice.job_number?.trim() &&
+    !!invoice.cost_code?.trim() &&
+    !!invoice.coding_date &&
+    !!invoice.approver?.trim()
+  );
+}
+
 function Row({
   label,
   value,
@@ -338,7 +397,7 @@ function Row({
 }) {
   const filled = !!(value && String(value).trim());
   return (
-    <div className="flex items-baseline gap-2 text-[10px]">
+    <div className="flex items-baseline gap-2 leading-tight">
       <span className="font-bold text-navy w-[58px] flex-shrink-0">{label}</span>
       <span
         className={cn(

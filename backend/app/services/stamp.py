@@ -78,39 +78,49 @@ def _resolve_box(
     position uses a TOP-anchored y (matching how the user thinks). We
     convert here.
 
-    `position` is the raw JSONB dict from the invoice row, expected to
-    look like `{"x": 0.5, "y": 0.05, "width": 0.32}` with each value a
-    fraction of the page. None = use defaults.
+    `position` is the raw JSONB dict from the invoice row. Expected
+    shape: {"x", "y", "width", "height"} with each value a fraction of
+    the page (0–1, top-anchored). `height` is optional for backwards
+    compat with rows written before free-aspect resize shipped — when
+    missing, height is derived from the natural stamp aspect ratio.
+
+    None = use defaults (top-right, default size).
     """
     if not position or "x" not in position or "y" not in position or "width" not in position:
-        # Default: top-right with 24pt margin, 220pt wide
         x = page_w - _DEFAULT_BOX_W - _DEFAULT_MARGIN
         y = page_h - _DEFAULT_BOX_H - _DEFAULT_MARGIN
         return x, y, _DEFAULT_BOX_W, _DEFAULT_BOX_H
 
     try:
-        # Clamp width to a sensible range so an out-of-bounds value
-        # (e.g. from a corrupt patch payload) can't render an invisible
-        # or page-spanning stamp.
+        # Clamp dimensions to sensible ranges so an out-of-bounds value
+        # (e.g. corrupt patch payload) can't render an invisible /
+        # page-spanning stamp.
         width_frac = max(0.05, min(0.95, float(position["width"])))
         box_w = page_w * width_frac
-        box_h = box_w / _STAMP_ASPECT
 
-        # x is the fraction of page width to the stamp's LEFT edge.
-        # Clamp so the box stays on-page.
+        # Height: explicit if provided, else aspect-derived. The latter
+        # preserves behavior for invoices stamped before this column
+        # supported separate height.
+        height_provided = "height" in position and position["height"] is not None
+        if height_provided:
+            height_frac = max(0.03, min(0.95, float(position["height"])))
+            box_h = page_h * height_frac
+        else:
+            box_h = box_w / _STAMP_ASPECT
+
+        # x is fraction of page width to the stamp's LEFT edge.
         x_frac = max(0.0, min(1.0 - width_frac, float(position["x"])))
         x = page_w * x_frac
 
-        # y is fraction of page height from the TOP to the stamp's top
-        # edge. Convert to bottom-anchored PDF y. Clamp so the box stays
-        # on-page (the stamp's bottom edge can't go below page).
-        h_frac = box_h / page_h
-        y_frac = max(0.0, min(1.0 - h_frac, float(position["y"])))
+        # y is fraction of page height from TOP to the stamp's top edge.
+        # Convert to bottom-anchored PDF y, then clamp so the box stays
+        # on-page (bottom edge can't fall below page).
+        h_frac_for_clamp = (box_h / page_h) if page_h else 0
+        y_frac = max(0.0, min(1.0 - h_frac_for_clamp, float(position["y"])))
         y = page_h - (page_h * y_frac) - box_h
 
         return x, y, box_w, box_h
     except (TypeError, ValueError, KeyError):
-        # Bad payload — fall back to default rather than failing the post.
         log.warning("Invalid stamp_position payload, using default: %r", position)
         x = page_w - _DEFAULT_BOX_W - _DEFAULT_MARGIN
         y = page_h - _DEFAULT_BOX_H - _DEFAULT_MARGIN

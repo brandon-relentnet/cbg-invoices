@@ -72,9 +72,12 @@ export interface StampPosition {
   /** Distance from page TOP edge to stamp's top edge, as a fraction of
    *  page height (0–1). */
   y: number;
-  /** Stamp width as a fraction of page width. Height is derived from
-   *  the stamp's natural aspect ratio (~2.29:1). */
+  /** Stamp width as a fraction of page width. */
   width: number;
+  /** Stamp height as a fraction of page height. Optional for backward
+   *  compatibility — when missing, the backend falls back to deriving
+   *  height from the natural ~2.29:1 aspect ratio. */
+  height?: number;
 }
 
 export interface InvoiceListResponse {

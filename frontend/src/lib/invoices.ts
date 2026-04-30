@@ -116,7 +116,7 @@ export interface InvoicePatchPayload {
   cost_code?: string | null;
   coding_date?: string | null;
   approver?: string | null;
-  stamp_position?: { x: number; y: number; width: number } | null;
+  stamp_position?: { x: number; y: number; width: number; height?: number } | null;
 }
 
 export function usePatchInvoice(id: string) {
