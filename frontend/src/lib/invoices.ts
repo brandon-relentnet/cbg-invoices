@@ -257,6 +257,44 @@ export function useRetryQbo(id: string) {
   });
 }
 
+/**
+ * Move an invoice from NEEDS_TRIAGE → READY_FOR_REVIEW. Used by the
+ * triage row's "Promote" action and also by the review screen banner
+ * when AP confirms a triaged document is actually a real invoice.
+ */
+export function usePromoteFromTriage(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<Invoice>(`/api/invoices/${id}/promote`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      // Triage list shrinks; main queue may grow.
+      qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
+/**
+ * Trust the sender's email domain + promote in one click. Called from
+ * the triage row when ``triage_reason === 'unknown_sender'`` (or any
+ * time the operator wants to mark this vendor as known going forward).
+ */
+export function useTrustSenderAndPromote(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      request<Invoice>(`/api/invoices/${id}/trust-sender`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      qc.invalidateQueries({ queryKey: qk.invoices.root() });
+      // Trusted-domains list also gains a new entry.
+      qc.invalidateQueries({ queryKey: ["trusted-domains"] });
+    },
+  });
+}
+
 export function useVendors() {
   const { request } = useApi();
   return useQuery({

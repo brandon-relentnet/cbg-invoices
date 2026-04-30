@@ -1,5 +1,10 @@
 import { Badge } from "@/components/ui/Badge";
-import type { Invoice, InvoiceStatus } from "@/types";
+import type {
+  DocumentType,
+  Invoice,
+  InvoiceStatus,
+  TriageReason,
+} from "@/types";
 
 /**
  * Primary status badge — the one-glance signal of where an invoice sits.
@@ -39,6 +44,11 @@ const STATUS_CONFIG: Record<
     tone: "amber",
     label: "Needs review",
     dotColor: "#c8923c",
+  },
+  needs_triage: {
+    tone: "amber",
+    label: "Triage",
+    dotColor: "#9a6324",
   },
   approved: { tone: "green", label: "Approved", dotColor: "#15803d" },
   posted_to_qbo: { tone: "navy", label: "Posted", dotColor: "#c8923c" },
@@ -91,4 +101,78 @@ export function PostStateBadge({ invoice }: { invoice: Pick<Invoice, "status" | 
     );
   }
   return null;
+}
+
+/**
+ * Why an invoice landed in NEEDS_TRIAGE. Shown alongside StatusBadge in
+ * the queue's Triage tab and at the top of the review page so AP can
+ * decide what action to take without having to open every row.
+ *
+ * Each reason maps to a distinct color so a glance at the queue is
+ * enough to triage by category (all encrypted-PDF rows in red, all
+ * statement-style misclassifications in slate, etc).
+ */
+const TRIAGE_REASON_CONFIG: Record<
+  TriageReason,
+  { tone: React.ComponentProps<typeof Badge>["tone"]; label: string; dotColor?: string }
+> = {
+  non_invoice: {
+    tone: "slate",
+    label: "Not an invoice",
+    dotColor: "#64748b",
+  },
+  unknown_sender: {
+    tone: "amber",
+    label: "Unknown sender",
+    dotColor: "#9a6324",
+  },
+  body_rendered: {
+    tone: "blue",
+    label: "From email body",
+    dotColor: "#1d4ed8",
+  },
+  encrypted_pdf: {
+    tone: "red",
+    label: "Encrypted PDF",
+    dotColor: "#b91c1c",
+  },
+  low_confidence: {
+    tone: "amber",
+    label: "Low confidence",
+    dotColor: "#c8923c",
+  },
+};
+
+export function TriageReasonBadge({ reason }: { reason: TriageReason }) {
+  const cfg = TRIAGE_REASON_CONFIG[reason];
+  if (!cfg) return null;
+  return (
+    <Badge tone={cfg.tone} dot dotColor={cfg.dotColor}>
+      {cfg.label}
+    </Badge>
+  );
+}
+
+/**
+ * Compact label for ``document_type`` — shown in triage rows alongside
+ * the reason badge so AP can see "Statement (not an invoice)" at a
+ * glance. Returns null for ``invoice`` and ``unknown`` since neither
+ * adds useful context: the latter is the default, the former is the
+ * happy path.
+ */
+const DOCUMENT_TYPE_LABEL: Record<DocumentType, string | null> = {
+  invoice: null,
+  statement: "Statement",
+  quote: "Quote",
+  order_ack: "Order ack",
+  receipt: "Receipt",
+  supporting_doc: "Supporting doc",
+  other: "Other",
+  unknown: null,
+};
+
+export function DocumentTypeBadge({ type }: { type: DocumentType }) {
+  const label = DOCUMENT_TYPE_LABEL[type];
+  if (!label) return null;
+  return <Badge tone="slate">{label}</Badge>;
 }

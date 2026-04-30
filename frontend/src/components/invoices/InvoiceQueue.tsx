@@ -3,6 +3,7 @@ import {
   ArchiveBoxIcon,
   ArrowUturnLeftIcon,
   CheckCircleIcon,
+  ExclamationTriangleIcon,
   InboxIcon,
   UserCircleIcon,
   UsersIcon,
@@ -30,7 +31,12 @@ import { cn } from "@/lib/cn";
  * Review it would always be empty (those invoices are unassigned by
  * definition), and on Archived it isn't useful for daily work.
  */
-type FilterKey = "need_review" | "assigned" | "approved" | "archived";
+type FilterKey =
+  | "need_review"
+  | "assigned"
+  | "approved"
+  | "triage"
+  | "archived";
 
 interface FilterDef {
   key: FilterKey;
@@ -74,6 +80,12 @@ const FILTERS: FilterDef[] = [
     mineCapable: true,
   },
   {
+    key: "triage",
+    label: "Triage",
+    status: ["needs_triage"],
+    mineCapable: false,
+  },
+  {
     key: "archived",
     label: "Archived",
     status: ["rejected"],
@@ -81,7 +93,12 @@ const FILTERS: FilterDef[] = [
   },
 ];
 
-const PRIMARY_FILTERS = FILTERS.filter((f) => f.key !== "archived");
+// "Triage" is conditionally added in the render based on triageCount —
+// it's noise when the bucket is empty, important when it isn't.
+const PRIMARY_FILTERS_BASE = FILTERS.filter(
+  (f) => f.key !== "archived" && f.key !== "triage",
+);
+const TRIAGE_FILTER = FILTERS.find((f) => f.key === "triage")!;
 
 export function InvoiceQueue() {
   const user = useUser();
@@ -109,6 +126,15 @@ export function InvoiceQueue() {
 
   const { data, isLoading, error } = useInvoices(queryParams);
 
+  // Lightweight count-only query for the triage chip — pulls the total
+  // without the row payload. Polled at the same cadence as the main
+  // queue so the chip updates promptly when new triage rows land.
+  const { data: triageData } = useInvoices({
+    status: ["needs_triage"],
+    page_size: 1,
+  });
+  const triageCount = triageData?.total ?? 0;
+
   const invoices = data?.invoices ?? [];
   const empty = !isLoading && invoices.length === 0;
 
@@ -124,6 +150,22 @@ export function InvoiceQueue() {
   };
 
   const isArchived = filterKey === "archived";
+  const isTriage = filterKey === "triage";
+
+  // Build the chip set: primary tabs always; triage chip when there's
+  // actually something in triage OR we're already viewing it (so the
+  // chip doesn't disappear out from under the user).
+  const showTriageChip = triageCount > 0 || isTriage;
+  const chips: { key: FilterKey; label: string; count?: number }[] = [
+    ...PRIMARY_FILTERS_BASE.map((f) => ({ key: f.key, label: f.label })),
+  ];
+  if (showTriageChip) {
+    chips.push({
+      key: TRIAGE_FILTER.key,
+      label: TRIAGE_FILTER.label,
+      count: triageCount,
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -135,7 +177,7 @@ export function InvoiceQueue() {
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="flex-1 min-w-0">
             <FilterChips
-              chips={PRIMARY_FILTERS.map((f) => ({ key: f.key, label: f.label }))}
+              chips={chips}
               active={isArchived ? "" : filterKey}
               onChange={handleTabChange}
             />
@@ -323,6 +365,11 @@ function EmptyState({
       title: "Nothing approved yet",
       body: "Approved and posted invoices live here. Each row tells you whether it's already in QuickBooks.",
       Icon: CheckCircleIcon,
+    },
+    triage: {
+      title: "Nothing needs triage",
+      body: "Documents that aren't confidently invoices land here. We'll route statements, quotes, encrypted PDFs, and other ambiguous email content for your review.",
+      Icon: ExclamationTriangleIcon,
     },
     archived: {
       title: "Archive is empty",

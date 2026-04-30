@@ -3,9 +3,27 @@ export type InvoiceStatus =
   | "extracting"
   | "extraction_failed"
   | "ready_for_review"
+  | "needs_triage"
   | "approved"
   | "posted_to_qbo"
   | "rejected";
+
+export type DocumentType =
+  | "invoice"
+  | "statement"
+  | "quote"
+  | "order_ack"
+  | "receipt"
+  | "supporting_doc"
+  | "other"
+  | "unknown";
+
+export type TriageReason =
+  | "non_invoice"
+  | "unknown_sender"
+  | "body_rendered"
+  | "encrypted_pdf"
+  | "low_confidence";
 
 export interface LineItem {
   description: string;
@@ -63,6 +81,28 @@ export interface Invoice {
    *  attachment. All values are fractions of the page (top-anchored).
    *  Null = use default top-right placement. */
   stamp_position: StampPosition | null;
+
+  /** Set by the extractor — what kind of document this is. Drives
+   *  the routing decision between READY_FOR_REVIEW and NEEDS_TRIAGE. */
+  document_type: DocumentType | null;
+  /** When status === "needs_triage", explains why we routed it there. */
+  triage_reason: TriageReason | null;
+}
+
+export interface TrustedDomain {
+  id: string;
+  domain: string;
+  source: "qbo_sync" | "manual" | "promoted_from_triage";
+  qbo_vendor_id: string | null;
+  added_by_id: string | null;
+  added_by_email: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface TrustedDomainListResponse {
+  domains: TrustedDomain[];
+  counts: Record<string, number>;
 }
 
 export interface StampPosition {
