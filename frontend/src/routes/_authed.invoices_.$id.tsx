@@ -23,6 +23,7 @@ import { SplitButton, type SplitButtonOption } from "@/components/ui/SplitButton
 import { StatusBadge } from "@/components/invoices/StatusBadge";
 import { PdfViewer } from "@/components/invoices/PdfViewer";
 import { ExtractedFieldsForm } from "@/components/invoices/ExtractedFieldsForm";
+import { StampPreview } from "@/components/invoices/StampPreview";
 import { InvoiceSummary } from "@/components/invoices/InvoiceSummary";
 import { AssigneePicker } from "@/components/invoices/AssigneePicker";
 import {
@@ -88,6 +89,18 @@ function InvoiceDetailPage() {
   const pendingPatch = useRef<InvoicePatchPayload | null>(null);
   const [dirty, setDirty] = useState(false);
   const [forceEdit, setForceEdit] = useState(false);
+
+  // Live AP coding draft — only the 4 fields the stamp preview needs.
+  // Subscribed via onCodingChange so the rest of the form keeps its
+  // ref-based "no re-render on keystroke" optimization. Starts empty
+  // and gets populated when ExtractedFieldsForm mounts (which fires
+  // onCodingChange with the invoice's current values).
+  const [codingDraft, setCodingDraft] = useState({
+    job_number: "",
+    cost_code: "",
+    coding_date: "",
+    approver: "",
+  });
 
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -384,8 +397,18 @@ function InvoiceDetailPage() {
             `min-w-[460px]` (intentional for inner horizontal scroll on
             mobile) propagates upward and forces the whole grid wider
             than the viewport, causing horizontal page scroll. */}
-        <div className="min-w-0 lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]">
+        <div className="relative min-w-0 lg:col-span-3 h-[55vh] sm:h-[65vh] lg:h-[calc(100vh-16rem)] lg:min-h-[600px]">
           <PdfViewer invoiceId={id} downloadUrl={invoice.pdf_url ?? undefined} />
+          {/* Live stamp preview, absolute-positioned over the PDF viewer's
+              top-right corner so it sits exactly where the actual stamp
+              will land on the QBO attachment. Hidden during extraction
+              and on terminal states (posted/rejected) where the stamp
+              is no longer relevant. */}
+          {showEditor && (
+            <div className="hidden md:block absolute top-3 right-3 z-10 pointer-events-none">
+              <StampPreview invoice={codingDraft} />
+            </div>
+          )}
         </div>
 
         <div className="min-w-0 lg:col-span-2">
@@ -408,6 +431,7 @@ function InvoiceDetailPage() {
                 pendingPatch.current = p;
                 setDirty(true);
               }}
+              onCodingChange={setCodingDraft}
               disabled={false}
             />
           ) : (

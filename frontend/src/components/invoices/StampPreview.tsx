@@ -10,12 +10,20 @@
  * Designed to be absolute-positioned over the top-right corner of the
  * PdfViewer area — purely a UX preview, no actual PDF mutation here.
  */
-import type { Invoice } from "@/types";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/format";
 
+interface CodingFields {
+  job_number: string | null | undefined;
+  cost_code: string | null | undefined;
+  coding_date: string | null | undefined;
+  approver: string | null | undefined;
+}
+
 interface Props {
-  invoice: Pick<Invoice, "job_number" | "cost_code" | "coding_date" | "approver">;
+  /** Accepts the live form draft (where blanks are "") or an Invoice
+   *  (where blanks are null). Either is rendered as "—". */
+  invoice: CodingFields;
   className?: string;
 }
 

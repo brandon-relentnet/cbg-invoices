@@ -5,16 +5,26 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
 import { Combobox } from "@/components/ui/Combobox";
-import { StampPreview } from "@/components/invoices/StampPreview";
 import { formatCents, formatDollarsInput, parseDollars } from "@/lib/format";
 import type { InvoicePatchPayload } from "@/lib/invoices";
 import { groupByField, useCodingOptions } from "@/lib/codingOptions";
+
+interface CodingDraft {
+  job_number: string;
+  cost_code: string;
+  coding_date: string;
+  approver: string;
+}
 
 interface Props {
   invoice: Invoice;
   vendors: Vendor[];
   projects: Project[];
   onChange: (patch: InvoicePatchPayload) => void;
+  /** Optional — fires whenever any of the four AP coding fields change.
+   *  The route page subscribes to drive the live stamp preview rendered
+   *  next to the PDF, without lifting the entire form state up. */
+  onCodingChange?: (draft: CodingDraft) => void;
   disabled?: boolean;
 }
 
@@ -103,7 +113,7 @@ function toPatch(s: FormState): InvoicePatchPayload {
   };
 }
 
-export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disabled }: Props) {
+export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, onCodingChange, disabled }: Props) {
   const [form, setForm] = useState<FormState>(() => fromInvoice(invoice));
   const codingOptionsQuery = useCodingOptions();
   const codingGroups = useMemo(
@@ -123,6 +133,19 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
     onChange(toPatch(form));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
+
+  // Surface just the four AP coding fields up to the parent so it can
+  // render the live stamp preview next to the PDF without subscribing
+  // to the rest of the form.
+  useEffect(() => {
+    onCodingChange?.({
+      job_number: form.job_number,
+      cost_code: form.cost_code,
+      coding_date: form.coding_date,
+      approver: form.approver,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.job_number, form.cost_code, form.coding_date, form.approver]);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((s) => ({ ...s, [key]: value }));
@@ -217,62 +240,49 @@ export function ExtractedFieldsForm({ invoice, vendors, projects, onChange, disa
             Highest priority section — these fields drive the project +
             cost-code allocation in QBO and live audit. Sometimes auto-
             extracted from the PDF markup, sometimes typed manually. */}
+        {/* Cambridge AP coding markup — the stamped values that go onto
+            the QBO attachment. The live preview lives outside the form
+            (in the PDF column) so the inputs have full breathing room. */}
         <FormSection title="Cambridge coding">
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-start">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
-              <Combobox
-                label="Job no."
-                labelTone="quiet"
-                value={form.job_number}
-                onChange={(v) => update("job_number", v)}
-                options={codingGroups.job_number}
-                placeholder="e.g. 25-11-04"
-                name="job_number"
-                disabled={disabled}
-              />
-              <Combobox
-                label="Cost code"
-                labelTone="quiet"
-                value={form.cost_code}
-                onChange={(v) => update("cost_code", v)}
-                options={codingGroups.cost_code}
-                placeholder='e.g. 01-520 "O"'
-                name="cost_code"
-                disabled={disabled}
-              />
-              <Input
-                label="Coding date"
-                labelTone="quiet"
-                type="date"
-                value={form.coding_date}
-                onChange={(e) => update("coding_date", e.target.value)}
-                disabled={disabled}
-              />
-              <Combobox
-                label="Approver"
-                labelTone="quiet"
-                value={form.approver}
-                onChange={(v) => update("approver", v)}
-                options={codingGroups.approver}
-                placeholder="e.g. jwh"
-                name="approver"
-                disabled={disabled}
-              />
-            </div>
-            {/* Live preview of the stamp that gets baked into the QBO
-                attachment at post time. Hidden on small screens to keep
-                form input ergonomics clean; the preview is auxiliary,
-                not blocking. */}
-            <div className="hidden lg:block flex-shrink-0">
-              <StampPreview
-                invoice={{
-                  job_number: form.job_number,
-                  cost_code: form.cost_code,
-                  coding_date: form.coding_date || null,
-                  approver: form.approver,
-                }}
-              />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Combobox
+              label="Job no."
+              labelTone="quiet"
+              value={form.job_number}
+              onChange={(v) => update("job_number", v)}
+              options={codingGroups.job_number}
+              placeholder="e.g. 25-11-04"
+              name="job_number"
+              disabled={disabled}
+            />
+            <Combobox
+              label="Cost code"
+              labelTone="quiet"
+              value={form.cost_code}
+              onChange={(v) => update("cost_code", v)}
+              options={codingGroups.cost_code}
+              placeholder='e.g. 01-520 "O"'
+              name="cost_code"
+              disabled={disabled}
+            />
+            <Input
+              label="Coding date"
+              labelTone="quiet"
+              type="date"
+              value={form.coding_date}
+              onChange={(e) => update("coding_date", e.target.value)}
+              disabled={disabled}
+            />
+            <Combobox
+              label="Approver"
+              labelTone="quiet"
+              value={form.approver}
+              onChange={(v) => update("approver", v)}
+              options={codingGroups.approver}
+              placeholder="e.g. jwh"
+              name="approver"
+              disabled={disabled}
+            />
           </div>
         </FormSection>
 

@@ -168,7 +168,9 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
           </label>
         )}
 
-        {/* Input + chevron */}
+        {/* Input + chevron + dropdown — wrapped in `relative` so the
+            dropdown can absolute-position over surrounding content
+            instead of pushing siblings down. */}
         <div className="relative">
           <input
             ref={ref}
@@ -217,6 +219,53 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
               )}
             />
           </button>
+
+          {/* Dropdown — absolutely positioned just below the input,
+              floats over whatever comes next without layout shift. */}
+          {open && (
+            <ul
+              id={inputId ? `${inputId}-listbox` : undefined}
+              role="listbox"
+              className="absolute left-0 right-0 top-full mt-1 z-40 max-h-60 overflow-y-auto bg-white border border-slate-300 shadow-lg"
+            >
+              {filtered.length === 0 && (
+                <li className="px-3 py-3 text-xs text-slate-500">
+                  No matching options. Type a value to use as custom.
+                </li>
+              )}
+              {filtered.map((o, i) => {
+                const highlighted = i === highlight;
+                const selected =
+                  value.trim().toLowerCase() === o.value.toLowerCase();
+                return (
+                  <li key={o.value} role="option" aria-selected={selected}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHighlight(i)}
+                      onClick={() => selectOption(o)}
+                      className={cn(
+                        "w-full text-left px-3 py-2 text-sm flex items-baseline justify-between gap-3 transition-colors",
+                        highlighted
+                          ? "bg-amber/10 text-navy"
+                          : selected
+                            ? "bg-stone/40"
+                            : "hover:bg-stone/40",
+                      )}
+                    >
+                      <span className="font-mono font-medium text-graphite truncate">
+                        {o.value}
+                      </span>
+                      {o.label && (
+                        <span className="text-xs text-slate-500 truncate">
+                          {o.label}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
         {/* Custom-value indicator */}
@@ -224,52 +273,6 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
           <p className="mt-1 text-[10px] text-amber font-semibold uppercase tracking-wider">
             {customSuffix}
           </p>
-        )}
-
-        {/* Dropdown */}
-        {open && (
-          <ul
-            id={inputId ? `${inputId}-listbox` : undefined}
-            role="listbox"
-            className="relative z-30 mt-1 max-h-60 overflow-y-auto bg-white border border-slate-300 shadow-lg"
-          >
-            {filtered.length === 0 && (
-              <li className="px-3 py-3 text-xs text-slate-500">
-                No matching options. Type a value to use as custom.
-              </li>
-            )}
-            {filtered.map((o, i) => {
-              const highlighted = i === highlight;
-              const selected =
-                value.trim().toLowerCase() === o.value.toLowerCase();
-              return (
-                <li key={o.value} role="option" aria-selected={selected}>
-                  <button
-                    type="button"
-                    onMouseEnter={() => setHighlight(i)}
-                    onClick={() => selectOption(o)}
-                    className={cn(
-                      "w-full text-left px-3 py-2 text-sm flex items-baseline justify-between gap-3 transition-colors",
-                      highlighted
-                        ? "bg-amber/10 text-navy"
-                        : selected
-                          ? "bg-stone/40"
-                          : "hover:bg-stone/40",
-                    )}
-                  >
-                    <span className="font-mono font-medium text-graphite truncate">
-                      {o.value}
-                    </span>
-                    {o.label && (
-                      <span className="text-xs text-slate-500 truncate">
-                        {o.label}
-                      </span>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
         )}
 
         {error && (
