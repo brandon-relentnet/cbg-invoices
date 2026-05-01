@@ -20,7 +20,11 @@ import { useMobileAppBar } from "@/components/layout/MobileAppBar";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { SplitButton, type SplitButtonOption } from "@/components/ui/SplitButton";
-import { StatusBadge } from "@/components/invoices/StatusBadge";
+import {
+  DocumentTypeBadge,
+  StatusBadge,
+  TriageReasonBadge,
+} from "@/components/invoices/StatusBadge";
 import { PdfViewer } from "@/components/invoices/PdfViewer";
 import { ExtractedFieldsForm } from "@/components/invoices/ExtractedFieldsForm";
 import { StampPreviewOverlay, type StampPosition } from "@/components/invoices/StampPreview";
@@ -34,8 +38,10 @@ import {
   usePatchInvoice,
   usePostInvoice,
   useProjects,
+  usePromoteFromTriage,
   useReextractInvoice,
   useRejectInvoice,
+  useTrustSenderAndPromote,
   useUnapproveInvoice,
   useUnassignInvoice,
   useVendors,
@@ -151,7 +157,10 @@ function InvoiceDetailPage() {
       invoice.status === "ready_for_review" ||
       invoice.status === "extraction_failed" ||
       invoice.status === "received" ||
-      invoice.status === "extracting"
+      invoice.status === "extracting" ||
+      // needs_triage stays in review mode so AP can edit fields before
+      // promoting (reason banner adds Promote / Trust+promote buttons).
+      invoice.status === "needs_triage"
     ) {
       return "review";
     }
@@ -728,7 +737,85 @@ function StatusBanner({
       </div>
     );
   }
+  if (invoice.status === "needs_triage") {
+    return <TriageBanner invoice={invoice} />;
+  }
   return null;
+}
+
+/**
+ * Banner shown at the top of the review page for invoices in
+ * NEEDS_TRIAGE. Surfaces the reason + per-reason guidance and inlines
+ * the same Promote / Trust+promote / Reject actions the queue's
+ * TriageRow exposes — so AP can act without scrolling to the footer.
+ */
+function TriageBanner({ invoice }: { invoice: Invoice }) {
+  const promote = usePromoteFromTriage(invoice.id);
+  const trustAndPromote = useTrustSenderAndPromote(invoice.id);
+
+  const isUnknownSender = invoice.triage_reason === "unknown_sender";
+  const canTrust = !!invoice.sender_email;
+  const busy = promote.isPending || trustAndPromote.isPending;
+
+  // Per-reason guidance text. Kept short — the badge already says what
+  // the reason is; the prose tells the operator what to look for.
+  const guidance: Record<NonNullable<Invoice["triage_reason"]>, string> = {
+    non_invoice:
+      "Claude classified this as something other than an invoice (statement, quote, order acknowledgement, receipt, or supporting document). If it's actually a real invoice, click Promote to send it to the main queue.",
+    unknown_sender:
+      "We don't yet trust this sender's domain. Promote if it's legitimate; click Trust + promote to skip this step for future invoices from the same domain.",
+    body_rendered:
+      "There was no PDF attachment — we rendered the email body as a fallback. Verify the totals and line items extracted correctly before promoting.",
+    encrypted_pdf:
+      "This PDF is password-protected so extraction was skipped. Ask the vendor to resend an unencrypted copy, or upload a decrypted version manually. Reject when no longer needed.",
+    low_confidence:
+      "Claude wasn't confident about its extraction. Review the fields, fix anything wrong, then promote when it looks right.",
+  };
+  const reasonText = invoice.triage_reason
+    ? guidance[invoice.triage_reason]
+    : "Pending decision.";
+
+  return (
+    <div className="mb-4 p-4 border-l-2 border-amber bg-amber/10 flex flex-col gap-3">
+      <div className="flex items-start gap-3">
+        <ExclamationTriangleIcon className="h-5 w-5 text-amber flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-navy">Needs triage</span>
+            {invoice.triage_reason && (
+              <TriageReasonBadge reason={invoice.triage_reason} />
+            )}
+            {invoice.document_type && (
+              <DocumentTypeBadge type={invoice.document_type} />
+            )}
+          </div>
+          <p className="text-sm text-graphite">{reasonText}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {isUnknownSender && canTrust && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => trustAndPromote.mutate()}
+            loading={trustAndPromote.isPending}
+            disabled={busy}
+          >
+            Trust sender + promote
+          </Button>
+        )}
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => promote.mutate()}
+          loading={promote.isPending}
+          disabled={busy}
+        >
+          Promote to review queue
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

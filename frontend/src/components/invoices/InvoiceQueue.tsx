@@ -12,6 +12,7 @@ import { useUser } from "@/lib/auth";
 import { useInvoices, type ListParams } from "@/lib/invoices";
 import type { InvoiceStatus } from "@/types";
 import { InvoiceRow, InvoiceCard } from "./InvoiceRow";
+import { TriageCard, TriageRow } from "./TriageRow";
 import { UploadDropzone } from "./UploadDropzone";
 import { EmptyState as UiEmptyState } from "@/components/ui/EmptyState";
 import { FilterChips } from "@/components/ui/FilterChips";
@@ -279,31 +280,58 @@ export function InvoiceQueue() {
           <>
             {/* Mobile / tablet: stacked cards */}
             <ul className="md:hidden divide-y divide-stone/60">
-              {invoices.map((inv) => (
-                <InvoiceCard key={inv.id} invoice={inv} />
-              ))}
+              {invoices.map((inv) =>
+                isTriage ? (
+                  <TriageCard key={inv.id} invoice={inv} />
+                ) : (
+                  <InvoiceCard key={inv.id} invoice={inv} />
+                ),
+              )}
             </ul>
 
-            {/* Desktop: full table */}
-            <table className="hidden md:table w-full">
-              <thead className="bg-stone/50">
-                <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
-                  <th className="px-4 py-3 text-left">Received</th>
-                  <th className="px-4 py-3 text-left">Vendor</th>
-                  <th className="px-4 py-3 text-left">Job</th>
-                  <th className="px-4 py-3 text-left">Invoice #</th>
-                  <th className="px-4 py-3 text-right">Amount</th>
-                  <th className="px-4 py-3 text-left">Assignee</th>
-                  <th className="px-4 py-3 text-left">Status</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map((inv) => (
-                  <InvoiceRow key={inv.id} invoice={inv} />
-                ))}
-              </tbody>
-            </table>
+            {/* Desktop: full table.  Triage view uses a different column
+                shape — the queue's standard Job / Invoice # / Assignee
+                columns aren't useful there because the rows haven't
+                been fully accepted as invoices yet. We surface
+                reason + document type instead so AP can act fast. */}
+            {isTriage ? (
+              <table className="hidden md:table w-full">
+                <thead className="bg-stone/50">
+                  <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
+                    <th className="px-4 py-3 text-left">Received</th>
+                    <th className="px-4 py-3 text-left">Vendor / Sender</th>
+                    <th className="px-4 py-3 text-left">Reason</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => (
+                    <TriageRow key={inv.id} invoice={inv} />
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table className="hidden md:table w-full">
+                <thead className="bg-stone/50">
+                  <tr className="border-b border-stone/60 text-xs font-bold uppercase tracking-widest text-amber">
+                    <th className="px-4 py-3 text-left">Received</th>
+                    <th className="px-4 py-3 text-left">Vendor</th>
+                    <th className="px-4 py-3 text-left">Job</th>
+                    <th className="px-4 py-3 text-left">Invoice #</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                    <th className="px-4 py-3 text-left">Assignee</th>
+                    <th className="px-4 py-3 text-left">Status</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => (
+                    <InvoiceRow key={inv.id} invoice={inv} />
+                  ))}
+                </tbody>
+              </table>
+            )}
           </>
         )}
         {data && total > invoices.length && (
