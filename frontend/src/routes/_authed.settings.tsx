@@ -1,5 +1,5 @@
 import { createFileRoute, useSearch } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircleIcon, XCircleIcon } from "@heroicons/react/24/solid";
 import {
   ArrowPathIcon,
@@ -31,8 +31,17 @@ import {
   useDeleteCodingOption,
   usePatchCodingOption,
 } from "@/lib/codingOptions";
+import {
+  useAddTrustedDomain,
+  useRemoveTrustedDomain,
+  useTrustedDomains,
+} from "@/lib/trustedDomains";
 import { useMe, ROLE_RANK } from "@/lib/users";
-import type { CodingField, CodingOption } from "@/types";
+import type {
+  CodingField,
+  CodingOption,
+  TrustedDomain,
+} from "@/types";
 import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_authed/settings")({
@@ -237,6 +246,11 @@ function SettingsPage() {
         {/* AP coding options — admin/owner only. PMs see the dropdowns
             on the review screen; this is where the curated list lives. */}
         <APCodingSection />
+
+        {/* Email-domain allowlist used by the triage workflow.
+            Auto-populated from QBO vendor emails on every sync;
+            admins can add manual entries for partners not in QBO. */}
+        <TrustedDomainsSection />
       </div>
     </>
   );
@@ -565,5 +579,236 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
         {value}
       </div>
     </div>
+  );
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Trusted email domains — controls the allowlist used by the email
+// triage workflow. The qbo_sync block is read-only (auto-managed),
+// the manual block is editable.
+// ──────────────────────────────────────────────────────────────────────────
+
+const SOURCE_LABEL: Record<TrustedDomain["source"], string> = {
+  qbo_sync: "From QuickBooks",
+  manual: "Manual",
+  promoted_from_triage: "Trusted from triage",
+};
+
+
+function TrustedDomainsSection() {
+  const me = useMe();
+  const role = me.data?.role ?? "member";
+  const canManage = ROLE_RANK[role] >= ROLE_RANK.admin;
+
+  // Skip the network call entirely for non-admin users — the API
+  // would 403 and we don't want to render a confusing error.
+  const query = useTrustedDomains({ enabled: canManage });
+  const add = useAddTrustedDomain();
+  const remove = useRemoveTrustedDomain();
+
+  const [draftDomain, setDraftDomain] = useState("");
+  const [draftNotes, setDraftNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const domains = query.data?.domains ?? [];
+  const grouped = useMemo(() => {
+    const buckets: Record<TrustedDomain["source"], TrustedDomain[]> = {
+      qbo_sync: [],
+      manual: [],
+      promoted_from_triage: [],
+    };
+    for (const d of domains) buckets[d.source].push(d);
+    return buckets;
+  }, [domains]);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!draftDomain.trim()) return;
+    try {
+      await add.mutateAsync({
+        domain: draftDomain.trim(),
+        notes: draftNotes.trim() || null,
+      });
+      setDraftDomain("");
+      setDraftNotes("");
+    } catch (exc) {
+      setError(
+        exc instanceof Error
+          ? exc.message
+          : "Could not add domain — try a different format.",
+      );
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    setError(null);
+    try {
+      await remove.mutateAsync(id);
+    } catch (exc) {
+      setError(
+        exc instanceof Error
+          ? exc.message
+          : "Could not remove this domain.",
+      );
+    }
+  };
+
+  return (
+    <Card accent="left">
+      <CardHeader>
+        <h2 className="font-display text-2xl text-navy">
+          Trusted email domains
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Senders from these domains skip the "Unknown sender" triage
+          path. We auto-populate from your QuickBooks vendor emails on
+          every sync — add manual entries here for partners not in QBO.
+        </p>
+      </CardHeader>
+      <CardBody>
+        {!canManage ? (
+          <p className="text-sm text-slate-500">
+            Admins manage the allowlist. The triage workflow uses these
+            domains to decide whether a sender is recognised.
+          </p>
+        ) : query.isLoading ? (
+          <div className="text-sm text-slate-500">Loading…</div>
+        ) : (
+          <div className="space-y-6">
+            {error && (
+              <div className="border-l-2 border-red-700 bg-red-50 px-3 py-2 text-sm text-red-900">
+                {error}
+              </div>
+            )}
+
+            {/* Manual + promoted-from-triage entries — editable */}
+            <div className="space-y-3">
+              <SectionLabel>Manual entries</SectionLabel>
+
+              <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[180px]">
+                  <Input
+                    label="Domain or email"
+                    value={draftDomain}
+                    onChange={(e) => setDraftDomain(e.target.value)}
+                    placeholder="vendor.com or hi@vendor.com"
+                  />
+                </div>
+                <div className="flex-1 min-w-[180px]">
+                  <Input
+                    label="Note (optional)"
+                    value={draftNotes}
+                    onChange={(e) => setDraftNotes(e.target.value)}
+                    placeholder="Subcontractor, partner, etc."
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  loading={add.isPending}
+                  disabled={!draftDomain.trim() || add.isPending}
+                >
+                  <PlusIcon className="h-4 w-4 mr-1" />
+                  Add
+                </Button>
+              </form>
+
+              {grouped.manual.length === 0 &&
+              grouped.promoted_from_triage.length === 0 ? (
+                <p className="text-sm text-slate-500 italic">
+                  No manual entries yet. Use the form above to trust a
+                  domain that isn't in QuickBooks.
+                </p>
+              ) : (
+                <ul className="divide-y divide-stone/60">
+                  {[...grouped.manual, ...grouped.promoted_from_triage].map(
+                    (d) => (
+                      <DomainRow
+                        key={d.id}
+                        domain={d}
+                        onRemove={() => handleRemove(d.id)}
+                        removing={remove.isPending}
+                      />
+                    ),
+                  )}
+                </ul>
+              )}
+            </div>
+
+            {/* QBO-synced entries — read-only display */}
+            <div className="space-y-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <SectionLabel>From QuickBooks</SectionLabel>
+                <span className="text-xs text-slate-400">
+                  {grouped.qbo_sync.length} domains
+                </span>
+              </div>
+              {grouped.qbo_sync.length === 0 ? (
+                <p className="text-sm text-slate-500 italic">
+                  No domains synced yet. Sync vendors from the
+                  QuickBooks card above to populate.
+                </p>
+              ) : (
+                <ul className="divide-y divide-stone/60">
+                  {grouped.qbo_sync.map((d) => (
+                    <DomainRow key={d.id} domain={d} readOnly />
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+
+function DomainRow({
+  domain,
+  onRemove,
+  removing,
+  readOnly,
+}: {
+  domain: TrustedDomain;
+  onRemove?: () => void;
+  removing?: boolean;
+  readOnly?: boolean;
+}) {
+  return (
+    <li className="flex flex-wrap items-center gap-3 py-2">
+      <span className="font-mono text-sm text-navy break-all">
+        {domain.domain}
+      </span>
+      <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
+        {SOURCE_LABEL[domain.source]}
+      </span>
+      {domain.notes && (
+        <span className="text-xs text-slate-500 italic min-w-0 truncate">
+          {domain.notes}
+        </span>
+      )}
+      <span className="ml-auto flex items-center gap-3">
+        {domain.added_by_email && (
+          <span className="text-xs text-slate-400 truncate max-w-[16ch]">
+            {domain.added_by_email}
+          </span>
+        )}
+        {!readOnly && onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={removing}
+            className="text-slate-400 hover:text-red-700 transition-colors p-1 disabled:opacity-50"
+            aria-label={`Remove ${domain.domain}`}
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+        )}
+      </span>
+    </li>
   );
 }
