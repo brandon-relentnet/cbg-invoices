@@ -55,9 +55,13 @@ class Settings(BaseSettings):
     qbo_redirect_uri: str = "http://localhost:8000/api/qbo/callback"
     qbo_default_expense_account_id: str = ""
 
-    # Resend (outbound email)
+    # Resend (outbound email + inbound webhook)
     resend_api_key: str = ""
     resend_from: str = "Cambridge Invoice Portal <onboarding@resend.dev>"
+    # Svix-style HMAC secret for the inbound webhook. Paste verbatim
+    # from Resend dashboard → Webhooks → Signing Secret. Includes the
+    # ``whsec_`` prefix.
+    resend_webhook_secret: str = ""
 
     @property
     def is_production(self) -> bool:

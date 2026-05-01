@@ -1,10 +1,26 @@
-"""Inbound webhooks — Postmark email and QBO (future)."""
+"""Inbound email webhooks — Postmark and Resend.
+
+Both providers funnel into the same downstream logic via
+``_process_inbound_email``: dedup by message id, render body-only emails,
+detect encrypted PDFs, upload to R2, audit-log, and queue extraction.
+The provider-specific routes only differ in:
+
+  - Auth scheme (Postmark = Basic Auth, Resend = Svix HMAC)
+  - Payload shape parsing (Resend webhook is metadata-only;
+    we have to call back to its API to fetch text/html + attachment
+    binaries)
+
+Keep both endpoints live during the cutover so we can flip back if
+Resend has any issue. After verification we can drop the Postmark
+endpoint + ``POSTMARK_WEBHOOK_SECRET`` in a follow-up.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Annotated, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
@@ -13,14 +29,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import get_session
 from app.models.invoice import Invoice, InvoiceStatus, TriageReason
-from app.services import audit, email_render, extraction, pdf_inspect, postmark, storage
+from app.services import (
+    audit,
+    email_render,
+    extraction,
+    pdf_inspect,
+    postmark,
+    resend_inbound,
+    storage,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
 
 
 # ---------------------------------------------------------------------------
-# Pre-flight helpers
+# Pre-flight helpers (asyncio.to_thread wrappers)
 # ---------------------------------------------------------------------------
 
 # Body content shorter than this is treated as "no real body" and the
@@ -72,15 +96,9 @@ async def postmark_inbound(
         log.warning("Postmark webhook missing MessageID — accepting but not deduping")
 
     # Dedup
-    if message_id:
-        existing = (
-            await session.execute(
-                select(Invoice.id).where(Invoice.email_message_id == message_id)
-            )
-        ).first()
-        if existing:
-            log.info("Duplicate Postmark MessageID %s — ignoring", message_id)
-            return {"status": "duplicate", "message_id": message_id}
+    if message_id and await _is_duplicate(session, message_id):
+        log.info("Duplicate Postmark MessageID %s — ignoring", message_id)
+        return {"status": "duplicate", "message_id": message_id}
 
     received_at = postmark.parse_received_at(payload.get("Date"))
     sender: str | None = payload.get("From")
@@ -89,20 +107,170 @@ async def postmark_inbound(
     subject: str | None = payload.get("Subject")
     body_text: str | None = payload.get("TextBody")
     body_html: str | None = payload.get("HtmlBody")
-    body: str | None = body_text or body_html
-
     attachments = postmark.extract_pdf_attachments(payload.get("Attachments") or [])
 
-    # Path A — no PDF attachments. If the body has substantive content,
-    # render it to a PDF and let it ride the normal extraction pipeline
-    # with triage_reason=BODY_RENDERED so the operator can confirm.
-    # Otherwise fall back to the rejected-stub behaviour.
+    return await _process_inbound_email(
+        session=session,
+        background=background,
+        provider="postmark",
+        message_id=message_id,
+        sender=sender,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        received_at=received_at,
+        attachments=attachments,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resend inbound
+# ---------------------------------------------------------------------------
+
+
+@router.post("/resend", status_code=status.HTTP_200_OK)
+async def resend_inbound_webhook(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    background: BackgroundTasks,
+    svix_id: Annotated[str | None, Header(alias="svix-id")] = None,
+    svix_timestamp: Annotated[str | None, Header(alias="svix-timestamp")] = None,
+    svix_signature: Annotated[str | None, Header(alias="svix-signature")] = None,
+) -> dict[str, Any]:
+    """Resend Inbound webhook handler.
+
+    The webhook itself only carries metadata. We verify the Svix
+    signature, then call back to Resend's REST API to fetch the email
+    body (text + html) and download each attachment binary before
+    handing off to the shared processing flow.
+    """
+    settings = get_settings()
+
+    raw_body = await request.body()
+
+    if not resend_inbound.verify_signature(
+        secret=settings.resend_webhook_secret,
+        svix_id=svix_id,
+        svix_timestamp=svix_timestamp,
+        svix_signature=svix_signature,
+        raw_body=raw_body,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    try:
+        event: dict[str, Any] = await request.json()
+    except Exception as exc:
+        log.warning("Resend webhook body is not JSON: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    event_type = event.get("type")
+    if event_type != "email.received":
+        # Ignore other Resend event types (sent, delivered, bounced, …)
+        # without erroring — Resend may share one webhook URL across
+        # multiple subscribed events.
+        log.debug("Ignoring Resend event type=%r", event_type)
+        return {"status": "ignored", "type": event_type}
+
+    data = event.get("data") or {}
+    email_id: str | None = data.get("email_id")
+    if not email_id:
+        raise HTTPException(status_code=400, detail="Missing data.email_id")
+
+    # Dedup on Resend's email_id (UUID).
+    if await _is_duplicate(session, email_id):
+        log.info("Duplicate Resend email_id %s — ignoring", email_id)
+        return {"status": "duplicate", "email_id": email_id}
+
+    sender = resend_inbound.parse_sender_email(data.get("from"))
+    subject = data.get("subject")
+    received_at = resend_inbound.parse_received_at(data.get("created_at"))
+
+    # Fetch body text + html. If the API roundtrip fails, return 500 so
+    # Resend retries (idempotent because we dedup by email_id).
+    try:
+        content = await resend_inbound.fetch_email_content(
+            settings.resend_api_key, email_id
+        )
+    except resend_inbound.ResendInboundError as exc:
+        log.exception("Resend fetch_email_content failed for %s", email_id)
+        raise HTTPException(status_code=502, detail=f"Resend API: {exc}")
+
+    # Fetch attachments. Per-attachment failures are logged and skipped
+    # inside fetch_attachments — only an outer 4xx/5xx raises here.
+    try:
+        all_attachments = await resend_inbound.fetch_attachments(
+            settings.resend_api_key, email_id
+        )
+    except resend_inbound.ResendInboundError as exc:
+        log.exception("Resend fetch_attachments failed for %s", email_id)
+        raise HTTPException(status_code=502, detail=f"Resend API: {exc}")
+
+    pdfs = resend_inbound.filter_pdfs(all_attachments)
+    if all_attachments and not pdfs:
+        log.info(
+            "Resend email %s had %d attachments but none are PDFs (%s)",
+            email_id,
+            len(all_attachments),
+            [a.content_type for a in all_attachments],
+        )
+    attachments = [(a.filename, a.content) for a in pdfs]
+
+    return await _process_inbound_email(
+        session=session,
+        background=background,
+        provider="resend",
+        message_id=email_id,
+        sender=sender,
+        subject=subject,
+        body_text=content.text,
+        body_html=content.html,
+        received_at=received_at,
+        attachments=attachments,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared processing flow
+# ---------------------------------------------------------------------------
+
+
+async def _is_duplicate(session: AsyncSession, message_id: str) -> bool:
+    existing = (
+        await session.execute(
+            select(Invoice.id).where(Invoice.email_message_id == message_id)
+        )
+    ).first()
+    return existing is not None
+
+
+async def _process_inbound_email(
+    *,
+    session: AsyncSession,
+    background: BackgroundTasks,
+    provider: str,
+    message_id: str | None,
+    sender: str | None,
+    subject: str | None,
+    body_text: str | None,
+    body_html: str | None,
+    received_at: datetime,
+    attachments: list[tuple[str, bytes]],
+) -> dict[str, Any]:
+    """Run a normalized inbound email through the ingestion pipeline.
+
+    ``provider`` is just for logging — the routing logic is identical
+    across providers.
+    """
+    body = body_text or body_html
+
+    # Path A — no PDF attachments.
     if not attachments:
         rendered_payload = (body_text or body_html or "").strip()
         if len(rendered_payload) >= MIN_BODY_LENGTH_FOR_RENDER:
             return await _ingest_body_only(
                 session=session,
                 background=background,
+                provider=provider,
                 message_id=message_id,
                 sender=sender,
                 subject=subject,
@@ -110,10 +278,9 @@ async def postmark_inbound(
                 body_html=body_html,
                 received_at=received_at,
             )
-
-        # Truly empty / auto-reply email.
         return await _record_rejected_no_pdf(
             session=session,
+            provider=provider,
             message_id=message_id,
             sender=sender,
             subject=subject,
@@ -121,74 +288,84 @@ async def postmark_inbound(
             received_at=received_at,
         )
 
-    # Path B — at least one PDF attachment. Process each.
+    # Path B — at least one PDF attachment.
     created: list[str] = []
     for idx, (filename, content) in enumerate(attachments):
-        # For multi-PDF emails we add `:idx` to MessageID to keep the
-        # dedup column unique.
+        # For multi-PDF emails we suffix the dedup key so each row stays unique.
         dedup_id = message_id if len(attachments) == 1 else f"{message_id}:{idx}"
 
-        page_count_value = await _safe_page_count(content, filename)
-        encrypted = await _safe_is_encrypted(content)
-
-        invoice_id = uuid4()
-        key = storage.build_storage_key(invoice_id, received_at=received_at)
-        try:
-            await storage.upload_pdf(key, content, filename=filename)
-        except Exception as exc:
-            log.exception("R2 upload failed for inbound %s", filename)
-            rejected = Invoice(
-                id=invoice_id,
-                source="email",
-                sender_email=sender,
-                email_subject=subject,
-                email_body=body,
-                email_message_id=dedup_id,
-                received_at=received_at,
-                pdf_storage_key="",
-                pdf_filename=filename,
-                pdf_size_bytes=len(content),
-                pdf_page_count=page_count_value,
-                status=InvoiceStatus.REJECTED,
-                notes=f"Storage upload failed: {exc}",
-            )
-            session.add(rejected)
-            continue
-
-        if encrypted:
-            # Skip extraction entirely — it would just fail. Land the row
-            # directly in triage with a clear reason so AP knows to ask
-            # the vendor for an unencrypted copy.
-            invoice = Invoice(
-                id=invoice_id,
-                source="email",
-                sender_email=sender,
-                email_subject=subject,
-                email_body=body,
-                email_message_id=dedup_id,
-                received_at=received_at,
-                pdf_storage_key=key,
-                pdf_filename=filename,
-                pdf_size_bytes=len(content),
-                pdf_page_count=page_count_value,
-                status=InvoiceStatus.NEEDS_TRIAGE,
-                triage_reason=TriageReason.ENCRYPTED_PDF,
-                notes=(
-                    "PDF is password-protected. Ask the vendor to resend "
-                    "without encryption, or upload a decrypted copy manually."
-                ),
-            )
-            session.add(invoice)
-            await session.flush()
-            await audit.record_system(
-                session,
-                action="triage_routed",
-                invoice_id=invoice_id,
-                message=f"reason=encrypted_pdf from={sender} filename={filename}",
-            )
+        invoice_id = await _ingest_pdf_attachment(
+            session=session,
+            background=background,
+            dedup_id=dedup_id,
+            sender=sender,
+            subject=subject,
+            body=body,
+            received_at=received_at,
+            filename=filename,
+            content=content,
+        )
+        if invoice_id:
             created.append(str(invoice_id))
-            continue
 
+    await session.commit()
+    log.info(
+        "%s inbound processed: message=%s created=%d",
+        provider.title(),
+        message_id,
+        len(created),
+    )
+    return {"status": "ok", "invoice_ids": created}
+
+
+async def _ingest_pdf_attachment(
+    *,
+    session: AsyncSession,
+    background: BackgroundTasks,
+    dedup_id: str | None,
+    sender: str | None,
+    subject: str | None,
+    body: str | None,
+    received_at: datetime,
+    filename: str,
+    content: bytes,
+) -> UUID | None:
+    """Upload one PDF, classify, and (if appropriate) queue extraction.
+
+    Returns the new invoice id on success, or ``None`` when a rejected
+    stub was added in place of a real ingestion (e.g. R2 upload failure).
+    """
+    page_count_value = await _safe_page_count(content, filename)
+    encrypted = await _safe_is_encrypted(content)
+
+    invoice_id = uuid4()
+    key = storage.build_storage_key(invoice_id, received_at=received_at)
+    try:
+        await storage.upload_pdf(key, content, filename=filename)
+    except Exception as exc:
+        log.exception("R2 upload failed for inbound %s", filename)
+        rejected = Invoice(
+            id=invoice_id,
+            source="email",
+            sender_email=sender,
+            email_subject=subject,
+            email_body=body,
+            email_message_id=dedup_id,
+            received_at=received_at,
+            pdf_storage_key="",
+            pdf_filename=filename,
+            pdf_size_bytes=len(content),
+            pdf_page_count=page_count_value,
+            status=InvoiceStatus.REJECTED,
+            notes=f"Storage upload failed: {exc}",
+        )
+        session.add(rejected)
+        return None
+
+    if encrypted:
+        # Skip extraction entirely — it would just fail. Land the row
+        # directly in triage with a clear reason so AP knows to ask
+        # the vendor for an unencrypted copy.
         invoice = Invoice(
             id=invoice_id,
             source="email",
@@ -201,43 +378,60 @@ async def postmark_inbound(
             pdf_filename=filename,
             pdf_size_bytes=len(content),
             pdf_page_count=page_count_value,
-            status=InvoiceStatus.RECEIVED,
+            status=InvoiceStatus.NEEDS_TRIAGE,
+            triage_reason=TriageReason.ENCRYPTED_PDF,
+            notes=(
+                "PDF is password-protected. Ask the vendor to resend "
+                "without encryption, or upload a decrypted copy manually."
+            ),
         )
         session.add(invoice)
         await session.flush()
         await audit.record_system(
             session,
-            action="email_received",
+            action="triage_routed",
             invoice_id=invoice_id,
-            message=f"from={sender} subject={subject!r} filename={filename}",
+            message=f"reason=encrypted_pdf from={sender} filename={filename}",
         )
-        created.append(str(invoice_id))
-        background.add_task(extraction.extract_invoice, invoice_id)
+        return invoice_id
 
-    await session.commit()
-    log.info(
-        "Postmark inbound processed: message=%s created=%d",
-        message_id,
-        len(created),
+    invoice = Invoice(
+        id=invoice_id,
+        source="email",
+        sender_email=sender,
+        email_subject=subject,
+        email_body=body,
+        email_message_id=dedup_id,
+        received_at=received_at,
+        pdf_storage_key=key,
+        pdf_filename=filename,
+        pdf_size_bytes=len(content),
+        pdf_page_count=page_count_value,
+        status=InvoiceStatus.RECEIVED,
     )
-    return {"status": "ok", "invoice_ids": created}
-
-
-# ---------------------------------------------------------------------------
-# Path-specific helpers
-# ---------------------------------------------------------------------------
+    session.add(invoice)
+    await session.flush()
+    await audit.record_system(
+        session,
+        action="email_received",
+        invoice_id=invoice_id,
+        message=f"from={sender} subject={subject!r} filename={filename}",
+    )
+    background.add_task(extraction.extract_invoice, invoice_id)
+    return invoice_id
 
 
 async def _ingest_body_only(
     *,
     session: AsyncSession,
     background: BackgroundTasks,
+    provider: str,
     message_id: str | None,
     sender: str | None,
     subject: str | None,
     body_text: str | None,
     body_html: str | None,
-    received_at,
+    received_at: datetime,
 ) -> dict[str, Any]:
     """Render the email body to a PDF and treat it as a normal inbound.
 
@@ -262,6 +456,7 @@ async def _ingest_body_only(
         log.exception("Body-only render failed; falling back to rejected stub")
         return await _record_rejected_no_pdf(
             session=session,
+            provider=provider,
             message_id=message_id,
             sender=sender,
             subject=subject,
@@ -278,6 +473,7 @@ async def _ingest_body_only(
         log.exception("R2 upload of rendered email body failed")
         return await _record_rejected_no_pdf(
             session=session,
+            provider=provider,
             message_id=message_id,
             sender=sender,
             subject=subject,
@@ -318,7 +514,8 @@ async def _ingest_body_only(
     background.add_task(extraction.extract_invoice, invoice_id)
     await session.commit()
     log.info(
-        "Postmark inbound (body-only): rendered email body → invoice %s, queued extraction",
+        "%s inbound (body-only): rendered email body → invoice %s, queued extraction",
+        provider.title(),
         invoice_id,
     )
     return {"status": "ok", "invoice_ids": [str(invoice_id)], "body_rendered": True}
@@ -327,11 +524,12 @@ async def _ingest_body_only(
 async def _record_rejected_no_pdf(
     *,
     session: AsyncSession,
+    provider: str,
     message_id: str | None,
     sender: str | None,
     subject: str | None,
     body: str | None,
-    received_at,
+    received_at: datetime,
     note: str = "No PDF attachment in inbound email",
 ) -> dict[str, Any]:
     """Create a rejected stub for emails that have no usable content."""
@@ -360,7 +558,8 @@ async def _record_rejected_no_pdf(
     )
     await session.commit()
     log.info(
-        "Postmark inbound %s had no usable PDF — created rejected stub %s",
+        "%s inbound %s had no usable PDF — created rejected stub %s",
+        provider.title(),
         message_id,
         invoice_id,
     )
