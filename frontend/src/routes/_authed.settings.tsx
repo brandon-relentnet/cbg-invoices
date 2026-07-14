@@ -125,7 +125,14 @@ function SettingsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {connected ? (
+                {qboQuery.error ? (
+                  // Don't claim "Not connected" when we couldn't even ask —
+                  // e.g. an auth failure. The connection may be fine.
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500">
+                    <ExclamationTriangleIcon className="h-5 w-5" />
+                    Status unavailable
+                  </span>
+                ) : connected ? (
                   <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-800">
                     <CheckCircleIcon className="h-5 w-5" />
                     Connected

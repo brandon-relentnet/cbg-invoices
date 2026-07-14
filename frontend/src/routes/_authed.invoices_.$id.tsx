@@ -11,6 +11,7 @@ import {
   PencilSquareIcon,
   UserPlusIcon,
   XCircleIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 // ClockIcon stays in scope below — used in the StatusBanner for the
 // "approved but QBO disconnected" case.
@@ -134,6 +135,8 @@ function InvoiceDetailPage() {
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showNotify, setShowNotify] = useState(false);
+  // Human-readable reason the last review action failed (backend 4xx detail).
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Assignment modals — one flow per action that needs an assignee.
   const [assignFlow, setAssignFlow] = useState<
@@ -288,18 +291,37 @@ function InvoiceDetailPage() {
     }
   }
 
+  // Failures from review actions used to vanish (unhandled promise rejection)
+  // — the user clicked Post/Approve and nothing visibly happened while the
+  // backend's 4xx explained exactly what to fix. Route every action through
+  // this guard so the reason lands in a visible banner.
+  async function guarded(fn: () => Promise<unknown>) {
+    setActionError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setActionError(
+        e instanceof Error ? e.message : "Something went wrong — please try again.",
+      );
+    }
+  }
+
   async function handleApprove() {
-    await flushDirty();
-    await approve.mutateAsync();
-    setForceEdit(false);
+    await guarded(async () => {
+      await flushDirty();
+      await approve.mutateAsync();
+      setForceEdit(false);
+    });
   }
 
   async function handleApproveAndPost() {
     if (!qboConnected) return;
-    await flushDirty();
-    await approveAndPost.mutateAsync();
-    setBurstPoll(true);
-    setForceEdit(false);
+    await guarded(async () => {
+      await flushDirty();
+      await approveAndPost.mutateAsync();
+      setBurstPoll(true);
+      setForceEdit(false);
+    });
   }
 
   async function handleAssign(member: TeamMember | null, notify: boolean) {
@@ -307,24 +329,28 @@ function InvoiceDetailPage() {
       setAssignFlow(null);
       return;
     }
-    await flushDirty();
-    await assign.mutateAsync({
-      user_id: member.id,
-      user_email: member.email,
-      user_name: member.name,
-      notify,
+    await guarded(async () => {
+      await flushDirty();
+      await assign.mutateAsync({
+        user_id: member.id,
+        user_email: member.email,
+        user_name: member.name,
+        notify,
+      });
+      setAssignFlow(null);
+      setForceEdit(false);
     });
-    setAssignFlow(null);
-    setForceEdit(false);
   }
 
   async function handleClaim() {
-    await claim.mutateAsync();
+    await guarded(() => claim.mutateAsync());
   }
 
   async function handlePost() {
-    await postOnly.mutateAsync();
-    setBurstPoll(true);
+    await guarded(async () => {
+      await postOnly.mutateAsync();
+      setBurstPoll(true);
+    });
   }
 
   async function handleReassign(member: TeamMember | null, notify: boolean) {
@@ -332,26 +358,34 @@ function InvoiceDetailPage() {
       setAssignFlow(null);
       return;
     }
-    await flushDirty();
-    await assign.mutateAsync({
-      user_id: member.id,
-      user_email: member.email,
-      user_name: member.name,
-      notify,
+    await guarded(async () => {
+      await flushDirty();
+      await assign.mutateAsync({
+        user_id: member.id,
+        user_email: member.email,
+        user_name: member.name,
+        notify,
+      });
+      setAssignFlow(null);
     });
-    setAssignFlow(null);
   }
 
   async function handleReject() {
     if (!rejectReason.trim()) return;
-    await reject.mutateAsync(rejectReason.trim());
+    await guarded(async () => {
+      await reject.mutateAsync(rejectReason.trim());
+      setRejectReason("");
+    });
+    // Close either way — on failure the banner explains what went wrong;
+    // leaving the modal open would hide it.
     setShowRejectModal(false);
-    setRejectReason("");
   }
 
   async function handleUnapprove() {
-    await unapprove.mutateAsync();
-    setForceEdit(true);
+    await guarded(async () => {
+      await unapprove.mutateAsync();
+      setForceEdit(true);
+    });
   }
 
   async function handleEdit() {
@@ -409,9 +443,25 @@ function InvoiceDetailPage() {
         canManage={canManageAssignments}
         showAssignActions={mode === "review" || invoice.status === "approved"}
         onReassign={() => setAssignFlow("reassign")}
-        onRemove={() => unassign.mutate()}
+        onRemove={() => void guarded(() => unassign.mutateAsync())}
         onNotify={() => setShowNotify(true)}
       />
+
+      {/* Why the last action was rejected — dismissable, replaced on retry. */}
+      {actionError && (
+        <div className="mb-4 p-4 border-l-2 border-red-700 bg-red-50 flex items-start gap-3">
+          <ExclamationTriangleIcon className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm text-red-900">{actionError}</div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="p-1 -m-1 text-red-700 hover:text-red-900 flex-shrink-0"
+            aria-label="Dismiss"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Context banners */}
       <StatusBanner
@@ -425,7 +475,7 @@ function InvoiceDetailPage() {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => reextract.mutate()}
+            onClick={() => void guarded(() => reextract.mutateAsync())}
             loading={reextract.isPending}
           >
             <ArrowPathIcon className="h-4 w-4" />
@@ -897,6 +947,11 @@ function TriageBanner({
             )}
           </div>
           <p className="text-sm text-graphite">{reasonText}</p>
+          {(trustAndPromote.error ?? promote.error) != null && (
+            <p className="text-xs font-medium text-red-700">
+              {((trustAndPromote.error ?? promote.error) as Error).message}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
