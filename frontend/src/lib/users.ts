@@ -102,13 +102,29 @@ export function useSetMyPassword() {
   const { request } = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (password: string) =>
+    mutationFn: (payload: { password: string; current_password?: string }) =>
       request<null>("/api/users/me/password", {
         method: "POST",
-        body: { password } as unknown as BodyInit,
+        body: payload as unknown as BodyInit,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ME_KEY });
+      void qc.invalidateQueries({ queryKey: USERS_KEY });
+    },
+  });
+}
+
+export function useUpdateMyName() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      request<MeInfo>("/api/users/me", {
+        method: "PATCH",
+        body: { name } as unknown as BodyInit,
+      }),
+    onSuccess: (me) => {
+      qc.setQueryData(ME_KEY, me);
       void qc.invalidateQueries({ queryKey: USERS_KEY });
     },
   });

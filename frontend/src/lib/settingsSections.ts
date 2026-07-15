@@ -12,6 +12,7 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
+  { id: "account", label: "Account" },
   { id: "quickbooks", label: "QuickBooks" },
   { id: "sync", label: "Sync settings", requiresQbo: true },
   { id: "coding", label: "AP coding" },
