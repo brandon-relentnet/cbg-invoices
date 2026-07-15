@@ -10,9 +10,11 @@ import {
   BellIcon,
   BookmarkIcon,
   BuildingStorefrontIcon,
+  ChatBubbleBottomCenterTextIcon,
   CheckBadgeIcon,
   ClockIcon,
   Cog6ToothIcon,
+  DevicePhoneMobileIcon,
   DocumentTextIcon,
   EnvelopeIcon,
   InboxIcon,
@@ -45,6 +47,30 @@ export interface Release {
 }
 
 export const RELEASES: Release[] = [
+  {
+    version: "0.2.3",
+    date: "July 14, 2026",
+    headline: "The app now tells you why",
+    summary:
+      "Two fixes that turn silent head-scratchers into plain answers.",
+    sections: [
+      {
+        kind: "improved",
+        items: [
+          {
+            Icon: ChatBubbleBottomCenterTextIcon,
+            title: "No more silent buttons",
+            body: "If a post or approval can't go through — say the invoice is missing its job number — the app now says so, right where you clicked, instead of quietly doing nothing.",
+          },
+          {
+            Icon: DevicePhoneMobileIcon,
+            title: "Expired sign-ins sort themselves out",
+            body: "If your session expires (it happens most on phones), the portal now takes you straight back to the sign-in screen instead of filling the page with confusing connection errors.",
+          },
+        ],
+      },
+    ],
+  },
   {
     version: "0.2.2",
     date: "July 1, 2026",
