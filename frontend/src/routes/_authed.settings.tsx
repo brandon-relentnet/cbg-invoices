@@ -5,10 +5,12 @@ import {
   ArrowPathIcon,
   BellIcon,
   ExclamationTriangleIcon,
+  KeyIcon,
   LinkIcon,
   PencilIcon,
   PlusIcon,
   ShieldCheckIcon,
+  UserCircleIcon,
   TagIcon,
   TrashIcon,
   XMarkIcon,
@@ -48,7 +50,20 @@ import {
   useUpdateMyNotificationPrefs,
   useUpdateNotificationSettings,
 } from "@/lib/notifications";
-import { useMe, ROLE_RANK } from "@/lib/users";
+import {
+  useMe,
+  useMyMfa,
+  useRemoveMyMfa,
+  useSetMyPassword,
+  useUpdateMyName,
+  ROLE_RANK,
+  type MfaFactor,
+} from "@/lib/users";
+import {
+  passwordPolicy,
+  PolicyItem,
+  POLICY_RULES,
+} from "@/components/auth/PasswordSetupModal";
 import type {
   CodingField,
   CodingOption,
@@ -111,6 +126,9 @@ function SettingsPage() {
       )}
 
       <div className="space-y-6">
+        {/* The signed-in user's own account — everyone sees this. */}
+        <AccountSection />
+
         {/* QBO Connection */}
         <Card accent="top" id="quickbooks" className="scroll-mt-6">
           <CardHeader>
@@ -345,6 +363,264 @@ const TZ_OPTIONS = [
   "America/Phoenix",
   "UTC",
 ];
+
+// ──────────────────────────────────────────────────────────────────────────
+// Account — the signed-in user's own profile: display name + password.
+// Email is read-only (changing it would need a verification flow in Logto).
+// ──────────────────────────────────────────────────────────────────────────
+
+function AccountSection() {
+  const me = useMe();
+  const updateName = useUpdateMyName();
+  const setPassword = useSetMyPassword();
+
+  const [name, setName] = useState("");
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [pwSaved, setPwSaved] = useState(false);
+
+  useEffect(() => {
+    if (me.data) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate form from fetched profile
+      setName(me.data.name ?? "");
+    }
+  }, [me.data]);
+
+  const { lengthOk, classesOk } = passwordPolicy(next);
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const nameDirty =
+    !!me.data && name.trim().length > 0 && name.trim() !== (me.data.name ?? "");
+  const canChangePw =
+    lengthOk && classesOk && next === confirm && current.length > 0 && !setPassword.isPending;
+
+  function changePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canChangePw) return;
+    setPwSaved(false);
+    setPassword.mutate(
+      { password: next, current_password: current },
+      {
+        onSuccess: () => {
+          setCurrent("");
+          setNext("");
+          setConfirm("");
+          setPwSaved(true);
+        },
+      },
+    );
+  }
+
+  return (
+    <Card accent="top" id="account" className="scroll-mt-6">
+      <CardHeader>
+        <h2 className="font-display text-2xl text-navy flex items-center gap-2">
+          <UserCircleIcon className="h-5 w-5 text-amber" aria-hidden />
+          Account
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Your profile and sign-in details.
+        </p>
+      </CardHeader>
+      <CardBody>
+        {me.isLoading ? (
+          <p className="text-sm text-slate-500">Loading…</p>
+        ) : (
+          <div className="space-y-6">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <Field label="Email" value={me.data?.email ?? "—"} mono />
+              <Field label="Role" value={me.data?.role ?? "member"} />
+            </dl>
+
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[220px]">
+                <Input
+                  label="Display name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="How your name appears to teammates"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => updateName.mutate(name.trim())}
+                loading={updateName.isPending}
+                disabled={!nameDirty}
+              >
+                Save
+              </Button>
+            </div>
+            {updateName.error && (
+              <p className="text-sm text-red-700">
+                {(updateName.error as Error).message}
+              </p>
+            )}
+
+            <form onSubmit={changePassword} className="space-y-3 pt-4 border-t border-stone/60">
+              <SectionLabel>
+                <span className="inline-flex items-center gap-1.5">
+                  <KeyIcon className="h-3.5 w-3.5 text-amber" aria-hidden />
+                  Change password
+                </span>
+              </SectionLabel>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Input
+                  label="Current password"
+                  labelTone="quiet"
+                  type="password"
+                  value={current}
+                  onChange={(e) => setCurrent(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <Input
+                  label="New password"
+                  labelTone="quiet"
+                  type="password"
+                  value={next}
+                  onChange={(e) => setNext(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <Input
+                  label="Confirm new password"
+                  labelTone="quiet"
+                  type="password"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  error={mismatch ? "Passwords don't match" : undefined}
+                />
+              </div>
+              {next.length > 0 && (
+                <ul className="text-xs space-y-1 border-l-2 border-slate-200 pl-3">
+                  <PolicyItem ok={lengthOk}>{POLICY_RULES[0]}</PolicyItem>
+                  <PolicyItem ok={classesOk}>{POLICY_RULES[1]}</PolicyItem>
+                </ul>
+              )}
+              {setPassword.error && (
+                <p className="text-sm text-red-700 bg-red-50 border-l-2 border-red-700 px-3 py-2">
+                  {(setPassword.error as Error).message}
+                </p>
+              )}
+              <div className="flex items-center gap-3">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  loading={setPassword.isPending}
+                  disabled={!canChangePw}
+                >
+                  Update password
+                </Button>
+                {pwSaved && (
+                  <span className="text-xs text-green-800">Password updated.</span>
+                )}
+              </div>
+            </form>
+
+            <MfaList />
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+const MFA_TYPE_LABEL: Record<string, string> = {
+  WebAuthn: "Passkey",
+  Totp: "Authenticator app",
+  BackupCode: "Backup codes",
+};
+
+// Passkeys are device-bound (a Windows Hello passkey doesn't exist on your
+// phone), so a stuck factor must be removable without the Logto console.
+function MfaList() {
+  const mfa = useMyMfa();
+  const remove = useRemoveMyMfa();
+  const factors = mfa.data?.factors ?? [];
+
+  return (
+    <div className="space-y-3 pt-4 border-t border-stone/60">
+      <SectionLabel>
+        <span className="inline-flex items-center gap-1.5">
+          <ShieldCheckIcon className="h-3.5 w-3.5 text-amber" aria-hidden />
+          Passkeys &amp; two-factor
+        </span>
+      </SectionLabel>
+      <p className="text-xs text-slate-500">
+        A passkey only works on the device it was created on. If one is
+        locking you out on another device, remove it here — you can always
+        sign in with your password or an email code.
+      </p>
+      {mfa.isLoading ? (
+        <p className="text-sm text-slate-500">Loading…</p>
+      ) : mfa.error ? (
+        <p className="text-sm text-red-700">{(mfa.error as Error).message}</p>
+      ) : factors.length === 0 ? (
+        <p className="text-sm text-slate-500 italic">
+          None registered. You're signing in with your password.
+        </p>
+      ) : (
+        <ul className="divide-y divide-stone/60 border border-stone/60">
+          {factors.map((f) => (
+            <MfaRow
+              key={f.id}
+              factor={f}
+              removing={remove.isPending}
+              onRemove={() => {
+                if (
+                  window.confirm(
+                    `Remove this ${MFA_TYPE_LABEL[f.type] ?? f.type}? You'll sign in with your password afterwards.`,
+                  )
+                ) {
+                  remove.mutate(f.id);
+                }
+              }}
+            />
+          ))}
+        </ul>
+      )}
+      {remove.error && (
+        <p className="text-sm text-red-700">{(remove.error as Error).message}</p>
+      )}
+    </div>
+  );
+}
+
+function MfaRow({
+  factor,
+  removing,
+  onRemove,
+}: {
+  factor: MfaFactor;
+  removing: boolean;
+  onRemove: () => void;
+}) {
+  const label = MFA_TYPE_LABEL[factor.type] ?? factor.type;
+  const detail = factor.name || factor.agent;
+  return (
+    <li className="px-3 py-2 flex items-center justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-graphite">{label}</div>
+        <div className="text-xs text-slate-500 truncate">
+          {detail && <span title={detail}>{detail}</span>}
+          {detail && factor.created_at && " · "}
+          {factor.created_at &&
+            `added ${new Date(factor.created_at).toLocaleDateString()}`}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={removing}
+        className="p-1.5 text-slate-500 hover:text-red-700 disabled:opacity-50 flex-shrink-0"
+        aria-label={`Remove ${label}`}
+      >
+        <TrashIcon className="h-4 w-4" />
+      </button>
+    </li>
+  );
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // My notifications — each user opts in/out of the emails sent to *them*.

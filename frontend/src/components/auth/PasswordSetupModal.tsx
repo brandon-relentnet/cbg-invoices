@@ -13,10 +13,16 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useSetMyPassword } from "@/lib/users";
 
-const POLICY_RULES = [
+export const POLICY_RULES = [
   "At least 8 characters",
   "Include 3 of: lowercase, UPPERCASE, number, symbol",
 ];
+
+/** Mirrors the backend's password policy. Shared with the Account section. */
+export function passwordPolicy(pw: string): { lengthOk: boolean; classesOk: boolean } {
+  const classes = [/[a-z]/.test(pw), /[A-Z]/.test(pw), /\d/.test(pw), /[^\w\s]/.test(pw)];
+  return { lengthOk: pw.length >= 8, classesOk: classes.filter(Boolean).length >= 3 };
+}
 
 export function PasswordSetupModal({ open }: { open: boolean }) {
   const [password, setPassword] = useState("");
@@ -24,15 +30,7 @@ export function PasswordSetupModal({ open }: { open: boolean }) {
   const [mismatch, setMismatch] = useState(false);
   const set = useSetMyPassword();
 
-  const pw = password;
-  const lengthOk = pw.length >= 8;
-  const classes = [
-    /[a-z]/.test(pw),
-    /[A-Z]/.test(pw),
-    /\d/.test(pw),
-    /[^\w\s]/.test(pw),
-  ];
-  const classesOk = classes.filter(Boolean).length >= 3;
+  const { lengthOk, classesOk } = passwordPolicy(password);
   const canSubmit =
     lengthOk &&
     classesOk &&
@@ -47,7 +45,7 @@ export function PasswordSetupModal({ open }: { open: boolean }) {
       return;
     }
     setMismatch(false);
-    await set.mutateAsync(password);
+    await set.mutateAsync({ password });
     setPassword("");
     setConfirm("");
   }
@@ -135,7 +133,7 @@ export function PasswordSetupModal({ open }: { open: boolean }) {
   );
 }
 
-function PolicyItem({
+export function PolicyItem({
   ok,
   children,
 }: {

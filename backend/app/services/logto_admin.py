@@ -217,6 +217,48 @@ async def set_user_password(user_id: str, password: str) -> None:
     )
 
 
+async def user_has_password(user_id: str) -> bool:
+    """Whether the user currently has a password set (Logto `hasPassword`)."""
+    data = await _request("GET", f"/api/users/{user_id}")
+    return bool(isinstance(data, dict) and data.get("hasPassword"))
+
+
+async def verify_user_password(user_id: str, password: str) -> bool:
+    """True when `password` matches the user's current password."""
+    try:
+        await _request(
+            "POST",
+            f"/api/users/{user_id}/password/verify",
+            json={"password": password},
+        )
+    except LogtoAdminError as exc:
+        # Logto answers 422 on mismatch (and on users with no password set).
+        if exc.status_code == 422:
+            return False
+        raise
+    return True
+
+
+async def list_user_mfa_verifications(user_id: str) -> list[dict[str, Any]]:
+    """List a user's MFA factors (WebAuthn passkeys, TOTP, backup codes)."""
+    data = await _request("GET", f"/api/users/{user_id}/mfa-verifications")
+    return data if isinstance(data, list) else []
+
+
+async def delete_user_mfa_verification(user_id: str, verification_id: str) -> None:
+    await _request(
+        "DELETE", f"/api/users/{user_id}/mfa-verifications/{verification_id}"
+    )
+
+
+async def update_user_name(user_id: str, name: str) -> LogtoUser:
+    """Update a user's display name."""
+    data = await _request("PATCH", f"/api/users/{user_id}", json={"name": name})
+    if not isinstance(data, dict):
+        raise LogtoAdminError(f"Unexpected update_user_name response: {data!r}")
+    return LogtoUser.from_api(data)
+
+
 async def get_user_custom_data(user_id: str) -> dict[str, Any]:
     data = await _request("GET", f"/api/users/{user_id}/custom-data")
     if isinstance(data, dict):

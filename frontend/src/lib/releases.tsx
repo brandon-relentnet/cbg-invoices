@@ -18,8 +18,10 @@ import {
   DocumentTextIcon,
   EnvelopeIcon,
   InboxIcon,
+  KeyIcon,
   LinkIcon,
   SparklesIcon,
+  UserCircleIcon,
 } from "@heroicons/react/24/outline";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -47,6 +49,30 @@ export interface Release {
 }
 
 export const RELEASES: Release[] = [
+  {
+    version: "0.2.4",
+    date: "July 15, 2026",
+    headline: "Your account, in your hands",
+    summary:
+      "A new Account section in Settings — change your password, update your name, and fix passkey lockouts yourself.",
+    sections: [
+      {
+        kind: "new",
+        items: [
+          {
+            Icon: UserCircleIcon,
+            title: "An Account section in Settings",
+            body: "Change your password (it asks for your current one first) and update the display name your teammates see — no admin needed.",
+          },
+          {
+            Icon: KeyIcon,
+            title: "Fix passkey lockouts yourself",
+            body: "A passkey made on one device (say, Windows Hello on your PC) doesn't exist on your phone. If one is locking you out, remove it under Settings → Account and sign in with your password instead.",
+          },
+        ],
+      },
+    ],
+  },
   {
     version: "0.2.3",
     date: "July 14, 2026",

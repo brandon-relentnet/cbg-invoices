@@ -102,13 +102,62 @@ export function useSetMyPassword() {
   const { request } = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (password: string) =>
+    mutationFn: (payload: { password: string; current_password?: string }) =>
       request<null>("/api/users/me/password", {
         method: "POST",
-        body: { password } as unknown as BodyInit,
+        body: payload as unknown as BodyInit,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ME_KEY });
+      void qc.invalidateQueries({ queryKey: USERS_KEY });
+    },
+  });
+}
+
+export interface MfaFactor {
+  id: string;
+  /** Logto types: WebAuthn (passkey), Totp, BackupCode */
+  type: string;
+  /** ISO-8601 timestamp (Logto's mfa-verifications format). */
+  created_at: string | null;
+  agent: string | null;
+  name: string | null;
+}
+
+const MFA_KEY = ["users", "me", "mfa"] as const;
+
+export function useMyMfa() {
+  const { request } = useApi();
+  return useQuery({
+    queryKey: MFA_KEY,
+    queryFn: () => request<{ factors: MfaFactor[] }>("/api/users/me/mfa"),
+    staleTime: 30_000,
+  });
+}
+
+export function useRemoveMyMfa() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<null>(`/api/users/me/mfa/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: MFA_KEY });
+    },
+  });
+}
+
+export function useUpdateMyName() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      request<MeInfo>("/api/users/me", {
+        method: "PATCH",
+        body: { name } as unknown as BodyInit,
+      }),
+    onSuccess: (me) => {
+      qc.setQueryData(ME_KEY, me);
       void qc.invalidateQueries({ queryKey: USERS_KEY });
     },
   });

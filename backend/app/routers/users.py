@@ -140,6 +140,9 @@ async def get_me(
 
 class SetPasswordRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
+    # Required when the user already has a password (change flow); omitted by
+    # the first-time setup modal (needs_password invite flow).
+    current_password: str | None = Field(default=None, max_length=128)
 
 
 @router.post("/me/password", status_code=204)
@@ -149,6 +152,13 @@ async def set_my_password(
 ):
     """Let the signed-in user set their own password.
 
+    Gate on Logto's actual `hasPassword`: anyone who already has a password
+    must supply it — a borrowed or hijacked session must not be enough to
+    take over the account. Users with no password yet (invite flow, or a
+    passwordless account) set one directly; the needs_password custom flag
+    can't be trusted for this because it's absent on accounts that predate
+    the invite flow.
+
     Runs password policy client-side-lite (length + class diversity) and then
     calls Logto's Management API to persist it. Clears the needs_password
     flag from custom_data on success.
@@ -157,11 +167,98 @@ async def set_my_password(
     if errors:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     try:
+        if await logto_admin.user_has_password(user.id):
+            if not body.current_password:
+                raise HTTPException(
+                    status_code=400, detail="Current password is required"
+                )
+            if not await logto_admin.verify_user_password(user.id, body.current_password):
+                raise HTTPException(
+                    status_code=400, detail="Current password is incorrect"
+                )
         await logto_admin.set_user_password(user.id, body.password)
         await logto_admin.patch_user_custom_data(user.id, {"needs_password": False})
     except logto_admin.LogtoAdminError as exc:
         log.exception("Failed to set password")
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+
+class MfaFactor(BaseModel):
+    id: str
+    # Logto types: WebAuthn (passkey), Totp, BackupCode
+    type: str
+    # ISO-8601 string from Logto (unlike the user object's epoch-ms createdAt).
+    created_at: str | None = None
+    # User-agent captured at registration — helps identify which device.
+    agent: str | None = None
+    name: str | None = None
+
+
+class MfaListResponse(BaseModel):
+    factors: list[MfaFactor]
+
+
+@router.get("/me/mfa", response_model=MfaListResponse)
+async def list_my_mfa(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """List the signed-in user's own MFA factors (passkeys etc.)."""
+    try:
+        raw = await logto_admin.list_user_mfa_verifications(user.id)
+    except logto_admin.LogtoAdminError as exc:
+        log.exception("Failed to list MFA factors")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+    return MfaListResponse(
+        factors=[
+            MfaFactor(
+                id=f["id"],
+                type=f.get("type", "Unknown"),
+                created_at=str(f["createdAt"]) if f.get("createdAt") is not None else None,
+                agent=f.get("agent"),
+                name=f.get("name"),
+            )
+            for f in raw
+            if isinstance(f, dict) and f.get("id")
+        ]
+    )
+
+
+@router.delete("/me/mfa/{verification_id}", status_code=204)
+async def remove_my_mfa(
+    verification_id: str,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Remove one of the signed-in user's own MFA factors.
+
+    Self-serve unblock for the "registered a passkey on one device, now stuck
+    on another" case — no Logto console needed.
+    """
+    try:
+        await logto_admin.delete_user_mfa_verification(user.id, verification_id)
+    except logto_admin.LogtoAdminError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Factor not found") from exc
+        log.exception("Failed to remove MFA factor")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+
+class UpdateMeRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=256)
+
+
+@router.patch("/me", response_model=MeResponse)
+async def update_me(
+    body: UpdateMeRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Let the signed-in user update their own display name."""
+    try:
+        updated = await logto_admin.update_user_name(user.id, body.name.strip())
+    except logto_admin.LogtoAdminError as exc:
+        log.exception("Failed to update profile")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+    dto = await _serialize(updated)
+    return MeResponse(**dto.model_dump())
 
 
 def _validate_password(pw: str) -> list[str]:
