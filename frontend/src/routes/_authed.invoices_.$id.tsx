@@ -337,9 +337,11 @@ function InvoiceDetailPage() {
         user_name: member.name,
         notify,
       });
-      setAssignFlow(null);
       setForceEdit(false);
     });
+    // Close either way — on failure the error banner sits behind the picker
+    // sheet, so leaving it open would hide the explanation.
+    setAssignFlow(null);
   }
 
   async function handleClaim() {
@@ -366,8 +368,9 @@ function InvoiceDetailPage() {
         user_name: member.name,
         notify,
       });
-      setAssignFlow(null);
     });
+    // Close either way — see handleAssign.
+    setAssignFlow(null);
   }
 
   async function handleReject() {

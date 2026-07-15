@@ -3,7 +3,7 @@
  * Use via useApi() hook inside React Query queries.
  */
 import { useCallback } from "react";
-import { useLogto } from "@logto/react";
+import { LogtoClientError, LogtoError, useLogto } from "@logto/react";
 import { postSignOutUri } from "@/lib/auth";
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) ?? "http://localhost:8000";
@@ -12,6 +12,27 @@ const RESOURCE = import.meta.env.VITE_LOGTO_RESOURCE as string;
 // Module-level so concurrent requests trigger at most one sign-out redirect.
 // A full page navigation (which signOut() causes) resets it naturally.
 let staleSessionSignOutTriggered = false;
+
+/**
+ * Is this getAccessToken failure proof the session is unrecoverable?
+ *
+ * Only two shapes qualify:
+ *  - LogtoClientError (e.g. `not_authenticated`) — no usable sign-in session.
+ *  - LogtoError whose OIDC payload is `invalid_grant` — the refresh token is
+ *    dead or was rotated away (the long-lived phone-session case).
+ *
+ * Everything else — `TypeError: Failed to fetch` while a phone's radio
+ * reconnects, a Logto restart, a proxy 5xx — is transient: the next poll
+ * will succeed, so it must surface as a failed request, never a sign-out.
+ */
+function isDefinitiveAuthFailure(e: unknown): boolean {
+  if (e instanceof LogtoClientError) return true;
+  if (e instanceof LogtoError) {
+    const oidcError = (e.data as { error?: string } | undefined)?.error;
+    return oidcError === "invalid_grant";
+  }
+  return false;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -34,25 +55,32 @@ export function useApi() {
 
   const request = useCallback(
     async <T,>(path: string, options: ApiOptions = {}): Promise<T> => {
-      let token: string | undefined;
-      try {
-        token = (await getAccessToken(RESOURCE)) ?? undefined;
-      } catch {
-        token = undefined;
-      }
-      if (!token && isAuthenticated) {
-        // Stale session: Logto still reports authenticated but can no longer
-        // mint an access token (expired/rotated refresh token — long-lived
-        // phone sessions hit this). Without this, every request would go out
-        // unauthenticated and surface as confusing 401s ("Missing bearer
-        // token") all over the UI. Sign out fully; the auth gate then routes
-        // to a fresh login.
+      // Stale session: Logto still reports authenticated but can no longer
+      // mint an access token (expired/rotated refresh token — long-lived
+      // phone sessions hit this). Without this, every request would go out
+      // unauthenticated and surface as confusing 401s ("Missing bearer
+      // token") all over the UI. Sign out fully; the auth gate then routes
+      // to a fresh login.
+      const staleSessionBailout = (): never => {
         if (!staleSessionSignOutTriggered) {
           staleSessionSignOutTriggered = true;
           void signOut(postSignOutUri());
         }
         throw new ApiError("Your session expired — sending you back to sign in…", 401, null);
+      };
+
+      let token: string | undefined;
+      try {
+        token = (await getAccessToken(RESOURCE)) ?? undefined;
+      } catch (e) {
+        if (isAuthenticated && isDefinitiveAuthFailure(e)) staleSessionBailout();
+        // Transient failure (network blip, Logto momentarily unreachable):
+        // rethrow as a normal request failure so react-query's retry/poll
+        // machinery absorbs it. Signing out here would log people out on
+        // flaky connections — the exact users the stale-session fix is for.
+        throw e instanceof Error ? e : new Error(String(e));
       }
+      if (!token && isAuthenticated) staleSessionBailout();
       const headers: HeadersInit = {
         ...(options.headers ?? {}),
       };
@@ -80,7 +108,7 @@ export function useApi() {
         } catch {
           // ignore
         }
-        if (res.status === 401 && !staleSessionSignOutTriggered) {
+        if (res.status === 401 && token && !staleSessionSignOutTriggered) {
           // We sent a token and the backend rejected it — the session is no
           // longer valid. Same recovery as the missing-token case above.
           staleSessionSignOutTriggered = true;
