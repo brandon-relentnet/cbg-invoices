@@ -114,6 +114,38 @@ export function useSetMyPassword() {
   });
 }
 
+export interface MfaFactor {
+  id: string;
+  /** Logto types: WebAuthn (passkey), Totp, BackupCode */
+  type: string;
+  created_at: number | null;
+  agent: string | null;
+  name: string | null;
+}
+
+const MFA_KEY = ["users", "me", "mfa"] as const;
+
+export function useMyMfa() {
+  const { request } = useApi();
+  return useQuery({
+    queryKey: MFA_KEY,
+    queryFn: () => request<{ factors: MfaFactor[] }>("/api/users/me/mfa"),
+    staleTime: 30_000,
+  });
+}
+
+export function useRemoveMyMfa() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<null>(`/api/users/me/mfa/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: MFA_KEY });
+    },
+  });
+}
+
 export function useUpdateMyName() {
   const { request } = useApi();
   const qc = useQueryClient();

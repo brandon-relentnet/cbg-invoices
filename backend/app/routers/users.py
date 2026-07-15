@@ -181,6 +181,64 @@ async def set_my_password(
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
 
 
+class MfaFactor(BaseModel):
+    id: str
+    # Logto types: WebAuthn (passkey), Totp, BackupCode
+    type: str
+    created_at: int | None = None
+    # User-agent captured at registration — helps identify which device.
+    agent: str | None = None
+    name: str | None = None
+
+
+class MfaListResponse(BaseModel):
+    factors: list[MfaFactor]
+
+
+@router.get("/me/mfa", response_model=MfaListResponse)
+async def list_my_mfa(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """List the signed-in user's own MFA factors (passkeys etc.)."""
+    try:
+        raw = await logto_admin.list_user_mfa_verifications(user.id)
+    except logto_admin.LogtoAdminError as exc:
+        log.exception("Failed to list MFA factors")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+    return MfaListResponse(
+        factors=[
+            MfaFactor(
+                id=f["id"],
+                type=f.get("type", "Unknown"),
+                created_at=f.get("createdAt"),
+                agent=f.get("agent"),
+                name=f.get("name"),
+            )
+            for f in raw
+            if isinstance(f, dict) and f.get("id")
+        ]
+    )
+
+
+@router.delete("/me/mfa/{verification_id}", status_code=204)
+async def remove_my_mfa(
+    verification_id: str,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Remove one of the signed-in user's own MFA factors.
+
+    Self-serve unblock for the "registered a passkey on one device, now stuck
+    on another" case — no Logto console needed.
+    """
+    try:
+        await logto_admin.delete_user_mfa_verification(user.id, verification_id)
+    except logto_admin.LogtoAdminError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Factor not found") from exc
+        log.exception("Failed to remove MFA factor")
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+
 class UpdateMeRequest(BaseModel):
     name: str = Field(min_length=1, max_length=256)
 

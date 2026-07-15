@@ -233,6 +233,18 @@ async def verify_user_password(user_id: str, password: str) -> bool:
     return True
 
 
+async def list_user_mfa_verifications(user_id: str) -> list[dict[str, Any]]:
+    """List a user's MFA factors (WebAuthn passkeys, TOTP, backup codes)."""
+    data = await _request("GET", f"/api/users/{user_id}/mfa-verifications")
+    return data if isinstance(data, list) else []
+
+
+async def delete_user_mfa_verification(user_id: str, verification_id: str) -> None:
+    await _request(
+        "DELETE", f"/api/users/{user_id}/mfa-verifications/{verification_id}"
+    )
+
+
 async def update_user_name(user_id: str, name: str) -> LogtoUser:
     """Update a user's display name."""
     data = await _request("PATCH", f"/api/users/{user_id}", json={"name": name})

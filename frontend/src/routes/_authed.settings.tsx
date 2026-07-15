@@ -50,7 +50,15 @@ import {
   useUpdateMyNotificationPrefs,
   useUpdateNotificationSettings,
 } from "@/lib/notifications";
-import { useMe, useSetMyPassword, useUpdateMyName, ROLE_RANK } from "@/lib/users";
+import {
+  useMe,
+  useMyMfa,
+  useRemoveMyMfa,
+  useSetMyPassword,
+  useUpdateMyName,
+  ROLE_RANK,
+  type MfaFactor,
+} from "@/lib/users";
 import {
   passwordPolicy,
   PolicyItem,
@@ -509,10 +517,108 @@ function AccountSection() {
                 )}
               </div>
             </form>
+
+            <MfaList />
           </div>
         )}
       </CardBody>
     </Card>
+  );
+}
+
+const MFA_TYPE_LABEL: Record<string, string> = {
+  WebAuthn: "Passkey",
+  Totp: "Authenticator app",
+  BackupCode: "Backup codes",
+};
+
+// Passkeys are device-bound (a Windows Hello passkey doesn't exist on your
+// phone), so a stuck factor must be removable without the Logto console.
+function MfaList() {
+  const mfa = useMyMfa();
+  const remove = useRemoveMyMfa();
+  const factors = mfa.data?.factors ?? [];
+
+  return (
+    <div className="space-y-3 pt-4 border-t border-stone/60">
+      <SectionLabel>
+        <span className="inline-flex items-center gap-1.5">
+          <ShieldCheckIcon className="h-3.5 w-3.5 text-amber" aria-hidden />
+          Passkeys &amp; two-factor
+        </span>
+      </SectionLabel>
+      <p className="text-xs text-slate-500">
+        A passkey only works on the device it was created on. If one is
+        locking you out on another device, remove it here — you can always
+        sign in with your password or an email code.
+      </p>
+      {mfa.isLoading ? (
+        <p className="text-sm text-slate-500">Loading…</p>
+      ) : mfa.error ? (
+        <p className="text-sm text-red-700">{(mfa.error as Error).message}</p>
+      ) : factors.length === 0 ? (
+        <p className="text-sm text-slate-500 italic">
+          None registered. You're signing in with your password.
+        </p>
+      ) : (
+        <ul className="divide-y divide-stone/60 border border-stone/60">
+          {factors.map((f) => (
+            <MfaRow
+              key={f.id}
+              factor={f}
+              removing={remove.isPending}
+              onRemove={() => {
+                if (
+                  window.confirm(
+                    `Remove this ${MFA_TYPE_LABEL[f.type] ?? f.type}? You'll sign in with your password afterwards.`,
+                  )
+                ) {
+                  remove.mutate(f.id);
+                }
+              }}
+            />
+          ))}
+        </ul>
+      )}
+      {remove.error && (
+        <p className="text-sm text-red-700">{(remove.error as Error).message}</p>
+      )}
+    </div>
+  );
+}
+
+function MfaRow({
+  factor,
+  removing,
+  onRemove,
+}: {
+  factor: MfaFactor;
+  removing: boolean;
+  onRemove: () => void;
+}) {
+  const label = MFA_TYPE_LABEL[factor.type] ?? factor.type;
+  const detail = factor.name || factor.agent;
+  return (
+    <li className="px-3 py-2 flex items-center justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-graphite">{label}</div>
+        <div className="text-xs text-slate-500 truncate">
+          {detail && <span title={detail}>{detail}</span>}
+          {detail && factor.created_at && " · "}
+          {factor.created_at &&
+            `added ${new Date(factor.created_at).toLocaleDateString()}`}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={removing}
+        className="p-1.5 text-slate-500 hover:text-red-700 disabled:opacity-50 flex-shrink-0"
+        aria-label={`Remove ${label}`}
+      >
+        <TrashIcon className="h-4 w-4" />
+      </button>
+    </li>
   );
 }
 
