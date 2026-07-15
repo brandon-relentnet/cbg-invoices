@@ -118,7 +118,8 @@ export interface MfaFactor {
   id: string;
   /** Logto types: WebAuthn (passkey), Totp, BackupCode */
   type: string;
-  created_at: number | null;
+  /** ISO-8601 timestamp (Logto's mfa-verifications format). */
+  created_at: string | null;
   agent: string | null;
   name: string | null;
 }

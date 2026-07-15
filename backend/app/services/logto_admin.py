@@ -217,6 +217,12 @@ async def set_user_password(user_id: str, password: str) -> None:
     )
 
 
+async def user_has_password(user_id: str) -> bool:
+    """Whether the user currently has a password set (Logto `hasPassword`)."""
+    data = await _request("GET", f"/api/users/{user_id}")
+    return bool(isinstance(data, dict) and data.get("hasPassword"))
+
+
 async def verify_user_password(user_id: str, password: str) -> bool:
     """True when `password` matches the user's current password."""
     try:

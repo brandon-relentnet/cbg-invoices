@@ -152,9 +152,12 @@ async def set_my_password(
 ):
     """Let the signed-in user set their own password.
 
-    First-time setup (needs_password flag from the invite flow) sets it
-    directly. Anyone who already has a password must supply it — a borrowed
-    or hijacked session must not be enough to take over the account.
+    Gate on Logto's actual `hasPassword`: anyone who already has a password
+    must supply it — a borrowed or hijacked session must not be enough to
+    take over the account. Users with no password yet (invite flow, or a
+    passwordless account) set one directly; the needs_password custom flag
+    can't be trusted for this because it's absent on accounts that predate
+    the invite flow.
 
     Runs password policy client-side-lite (length + class diversity) and then
     calls Logto's Management API to persist it. Clears the needs_password
@@ -164,8 +167,7 @@ async def set_my_password(
     if errors:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     try:
-        custom = await logto_admin.get_user_custom_data(user.id)
-        if not custom.get("needs_password"):
+        if await logto_admin.user_has_password(user.id):
             if not body.current_password:
                 raise HTTPException(
                     status_code=400, detail="Current password is required"
@@ -185,7 +187,8 @@ class MfaFactor(BaseModel):
     id: str
     # Logto types: WebAuthn (passkey), Totp, BackupCode
     type: str
-    created_at: int | None = None
+    # ISO-8601 string from Logto (unlike the user object's epoch-ms createdAt).
+    created_at: str | None = None
     # User-agent captured at registration — helps identify which device.
     agent: str | None = None
     name: str | None = None
@@ -210,7 +213,7 @@ async def list_my_mfa(
             MfaFactor(
                 id=f["id"],
                 type=f.get("type", "Unknown"),
-                created_at=f.get("createdAt"),
+                created_at=str(f["createdAt"]) if f.get("createdAt") is not None else None,
                 agent=f.get("agent"),
                 name=f.get("name"),
             )
