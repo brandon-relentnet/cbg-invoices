@@ -50,8 +50,15 @@ async def get_current_user(
         log.info("Invalid token: %s", exc)
         raise _unauthorized("Invalid token") from exc
     except Exception as exc:
+        # Not a verdict on the token — we couldn't verify it at all (e.g. the
+        # JWKS fetch failed while the auth service restarts). 503, not 401:
+        # the frontend signs users out on 401-with-token, and a transient
+        # infra blip must never do that.
         log.exception("Token verification failed unexpectedly")
-        raise _unauthorized(f"Token verification failed: {exc}") from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable — try again.",
+        ) from exc
 
     return CurrentUser(
         id=verified.sub,

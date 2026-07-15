@@ -151,6 +151,11 @@ export function QueueRow({
     </span>
   );
 
+  // Whatever row action last failed — the backend's message says why (e.g.
+  // "Cambridge AP coding incomplete — fill in job number…"). Without this the
+  // click just silently does nothing. Cleared by react-query on the next try.
+  const actionError = (post.error ?? claim.error ?? promote.error) as Error | null;
+
   // Meta sub-line: only the parts that exist, joined by · — keeps it calm.
   const meta = [
     invoice.invoice_number ? `#${invoice.invoice_number}` : null,
@@ -239,6 +244,14 @@ export function QueueRow({
           )}
         </div>
         <div className="mt-0.5 text-xs text-slate-500 truncate">{meta}</div>
+        {actionError && (
+          <div
+            className="mt-0.5 text-xs font-medium text-red-700 truncate"
+            title={actionError.message}
+          >
+            {actionError.message}
+          </div>
+        )}
       </div>
 
       {showAmount && (
