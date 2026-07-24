@@ -485,7 +485,7 @@ function InvoiceDetailPage() {
             Re-extract
           </Button>
         )}
-        {invoice.status === "approved" && invoice.qbo_post_error && canReviewActions && (
+        {invoice.status === "approved" && invoice.qbo_post_error && isAdmin && (
           <Button
             variant="primary"
             size="sm"
@@ -1133,7 +1133,9 @@ function ActionFooter(props: FooterProps) {
       options = [];
     } else if (isAssignee && canAct) {
       primary = { label: "Approve", onClick: onApprove };
-      options = isAdmin ? [approveAndPostOption, assignOption] : [approveAndPostOption];
+      // PMs approve but don't post — an admin posts from the Ready-to-Post
+      // queue. Only admins see the post shortcut here.
+      options = isAdmin ? [approveAndPostOption, assignOption] : [];
     } else if (isAdmin) {
       primary = {
         label: invoice.assigned_to_id ? "Reassign" : "Assign",
@@ -1148,20 +1150,30 @@ function ActionFooter(props: FooterProps) {
     if (!canAct) {
       return null;
     }
-    primary = {
-      label: "Post to QBO",
-      onClick: onPost,
-      disabled: !qboConnected,
-      disabledReason: "Connect QuickBooks in Settings first",
+    const unapproveOption: SplitButtonOption = {
+      label: "Unapprove",
+      description: "Revert to Needs Review for more edits",
+      onSelect: onUnapprove,
+      icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
     };
-    options = [
-      {
+    if (isAdmin) {
+      primary = {
+        label: "Post to QBO",
+        onClick: onPost,
+        disabled: !qboConnected,
+        disabledReason: "Connect QuickBooks in Settings first",
+      };
+      options = [unapproveOption];
+    } else {
+      // PMs don't post; posting is an admin action from the Ready-to-Post
+      // queue. Leave the assignee able to unapprove to fix a mistake.
+      primary = {
         label: "Unapprove",
-        description: "Revert to Needs Review for more edits",
-        onSelect: onUnapprove,
-        icon: <ArrowUturnLeftIcon className="h-4 w-4" />,
-      },
-    ];
+        onClick: onUnapprove,
+        variant: "secondary",
+      };
+      options = [];
+    }
   } else {
     // posted_to_qbo / rejected — no footer shown
     return null;

@@ -195,3 +195,90 @@ async def test_assign_respects_recipient_optout(tmp_path, monkeypatch: pytest.Mo
         bg = BackgroundTasks()
         await invoices.assign_invoice(inv.id, body, _user("admin-1"), session, bg)
         assert bg.tasks == []  # recipient opted out of assignment emails
+
+
+# ---------- posting is admin/owner-only (REL-65) ----------
+# PMs code and approve; only admins/owners post to QBO. The assignee who could
+# once post their own invoice must now be refused.
+
+
+async def _approved_coded_invoice(session: AsyncSession, **overrides) -> Invoice:
+    """An approved invoice with all four AP coding fields filled, so the only
+    thing that can block posting is the authorization check."""
+    inv = await _make_invoice(
+        session,
+        job_number="26-12-02",
+        cost_code="01-213.S",
+        coding_date=datetime.now(UTC).date(),
+        approver="Nathan",
+        **overrides,
+    )
+    inv.status = InvoiceStatus.APPROVED  # _make_invoice hardcodes ready_for_review
+    await session.commit()
+    return inv
+
+
+@pytest.mark.asyncio
+async def test_member_assignee_cannot_post(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_role(monkeypatch, "member")
+    factory = await _session_factory(tmp_path, "post_member")
+    async with factory() as session:
+        inv = await _approved_coded_invoice(session, assigned_to_id="user-1")
+
+        with pytest.raises(HTTPException) as exc:
+            await invoices.post_invoice_to_qbo(inv.id, _user("user-1"), session, BackgroundTasks())
+        assert exc.value.status_code == 403
+        # Untouched — no post was enqueued.
+        assert (await session.get(Invoice, inv.id)).status == InvoiceStatus.APPROVED
+
+
+@pytest.mark.asyncio
+async def test_member_assignee_cannot_approve_and_post(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_role(monkeypatch, "member")
+    factory = await _session_factory(tmp_path, "aandp_member")
+    async with factory() as session:
+        # Fully coded + ready_for_review: pre-fix this member call would have
+        # sailed through approve + post, so a 403 here proves the auth gate,
+        # not an incidental coding-incomplete 400.
+        inv = await _make_invoice(
+            session,
+            assigned_to_id="user-1",
+            job_number="26-12-02",
+            cost_code="01-213.S",
+            coding_date=datetime.now(UTC).date(),
+            approver="Nathan",
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await invoices.approve_and_post(inv.id, _user("user-1"), session, BackgroundTasks())
+        assert exc.value.status_code == 403
+        # The member could have /approve'd it, but approve-and-post must not
+        # slip an approval through either.
+        assert (await session.get(Invoice, inv.id)).status == InvoiceStatus.READY_FOR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_admin_can_post(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_role(monkeypatch, "admin")
+    factory = await _session_factory(tmp_path, "post_admin")
+    async with factory() as session:
+        inv = await _approved_coded_invoice(session, assigned_to_id=None)
+
+        bg = BackgroundTasks()
+        await invoices.post_invoice_to_qbo(inv.id, _user("admin-1"), session, bg)
+        # Posting is enqueued, not run inline.
+        assert len(bg.tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_member_can_still_approve(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The gate is on posting only — a PM assignee still approves their own.
+    _patch_role(monkeypatch, "member")
+    factory = await _session_factory(tmp_path, "approve_own")
+    async with factory() as session:
+        inv = await _make_invoice(session, assigned_to_id="user-1")
+
+        await invoices.approve_invoice(inv.id, _user("user-1"), session)
+        assert (await session.get(Invoice, inv.id)).status == InvoiceStatus.APPROVED
