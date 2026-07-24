@@ -322,6 +322,15 @@ function SettingsPage() {
                   }
                   hint="Used when posting bills with line items that have no account set."
                   disabled={accountsQuery.isLoading}
+                  // Without this a failed fetch looks identical to "this company
+                  // has no expense accounts" — both render a lone "— not set —".
+                  error={
+                    accountsQuery.isError
+                      ? "Couldn't load accounts from QuickBooks. Try Sync, or check the backend logs."
+                      : !accountsQuery.isLoading && accountsQuery.data?.accounts.length === 0
+                        ? "QuickBooks returned no accounts for this company."
+                        : undefined
+                  }
                 >
                   <option value="">— not set —</option>
                   {accountsQuery.data?.accounts.map((a) => (
