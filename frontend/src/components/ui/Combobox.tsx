@@ -35,6 +35,22 @@ export interface ComboboxOption {
   label?: string | null;
 }
 
+/**
+ * The description to show beneath a code in the dropdown. Curated labels
+ * often repeat the code ("01-213.S Engineering Services"), so strip that
+ * prefix and the row reads code + plain description instead of the code
+ * twice. Returns null when there's nothing useful to add.
+ */
+export function secondaryLabel(value: string, label?: string | null): string | null {
+  const l = (label ?? "").trim();
+  if (!l || l.toLowerCase() === value.trim().toLowerCase()) return null;
+  if (l.startsWith(value)) {
+    const rest = l.slice(value.length).replace(/^[\s\-–—:.]+/, "").trim();
+    return rest || null;
+  }
+  return l;
+}
+
 interface ComboboxProps {
   label?: string;
   hint?: string;
@@ -93,6 +109,16 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
     const isCustom =
       value.trim().length > 0 &&
       !options.some((o) => o.value.toLowerCase() === value.trim().toLowerCase());
+
+    // Full label (which includes the code) of the currently-selected option,
+    // shown under the field so a picked code doesn't collapse to just the code.
+    const selectedLabel = useMemo(() => {
+      const v = value.trim();
+      if (!v) return null;
+      const match = options.find((o) => o.value.toLowerCase() === v.toLowerCase());
+      const l = match?.label?.trim();
+      return l && l.toLowerCase() !== v.toLowerCase() ? l : null;
+    }, [value, options]);
 
     // Close on outside click
     useEffect(() => {
@@ -261,7 +287,7 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
                       onMouseEnter={() => setHighlight(i)}
                       onClick={() => selectOption(o)}
                       className={cn(
-                        "w-full text-left px-3 py-2 text-sm flex items-baseline justify-between gap-3 transition-colors",
+                        "w-full text-left px-3 py-2 text-sm flex flex-col items-start gap-0.5 transition-colors",
                         highlighted
                           ? "bg-amber/10 text-navy"
                           : selected
@@ -269,12 +295,12 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
                             : "hover:bg-stone/40",
                       )}
                     >
-                      <span className="font-mono font-medium text-graphite truncate">
+                      <span className="font-mono font-medium text-graphite">
                         {o.value}
                       </span>
-                      {o.label && (
-                        <span className="text-xs text-slate-500 truncate">
-                          {o.label}
+                      {secondaryLabel(o.value, o.label) && (
+                        <span className="text-xs text-slate-500 break-words">
+                          {secondaryLabel(o.value, o.label)}
                         </span>
                       )}
                     </button>
@@ -288,7 +314,10 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(
         {error && (
           <p className="mt-1 text-xs text-red-700">{error}</p>
         )}
-        {!error && hint && (
+        {!error && selectedLabel && (
+          <p className="mt-1 text-xs text-slate-600 break-words">{selectedLabel}</p>
+        )}
+        {!error && !selectedLabel && hint && (
           <p className="mt-1 text-xs text-slate-500">{hint}</p>
         )}
       </div>
