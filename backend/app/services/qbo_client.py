@@ -45,6 +45,14 @@ class QboApiError(RuntimeError):
         self.status_code = status_code
         self.body = body
 
+    def __str__(self) -> str:
+        # QBO puts the only useful part of a failure (Fault/Error/Message) in the
+        # response body. Without this it was captured and then dropped at every
+        # layer — logs, the 502 detail, and invoice.qbo_post_error all showed a
+        # bare "QBO GET /query failed (400)" with no reason.
+        base = super().__str__()
+        return f"{base}: {self.body}" if self.body else base
+
 
 # ---------- OAuth ----------
 
@@ -238,6 +246,7 @@ async def _request(
 
     if resp.status_code >= 400:
         body_text = resp.text[:2000]
+        log.warning("QBO %s %s failed (%s): %s", method, path, resp.status_code, body_text)
         raise QboApiError(
             f"QBO {method} {path} failed ({resp.status_code})",
             status_code=resp.status_code,
@@ -309,10 +318,36 @@ async def upload_attachable_for_bill(
     return await _request(session, "POST", "/upload", files=files)
 
 
+EXPENSE_ACCOUNT_TYPES = frozenset({"expense", "other expense", "cost of goods sold"})
+
+
 async def fetch_expense_accounts(session: AsyncSession) -> list[dict[str, Any]]:
-    """Return active accounts of type Expense / CostOfGoodsSold for the account picker."""
-    return await qbo_query(
-        session,
-        "SELECT * FROM Account WHERE Active = true AND "
-        "AccountType IN ('Expense', 'Other Expense', 'Cost of Goods Sold')",
-    )
+    """Return active accounts for the default-expense-account picker.
+
+    Fetched unfiltered and narrowed here rather than in the QBO WHERE clause,
+    for two reasons:
+
+    1. The previous WHERE clause is legal per Intuit's query docs, so it was
+       never proven to be the fault — but it was the only filtered query in
+       this module and the only one that came back empty in production. A bare
+       SELECT matches the vendor/customer/class syncs that are known-good,
+       which removes the variable instead of arguing about it.
+    2. A server-side filter can only ever return nothing. Narrowing locally
+       lets us fall back to *all* active accounts when a company's chart of
+       accounts doesn't use the expected types — an empty picker means AP
+       cannot post at all, which is strictly worse than a longer list. The
+       picker labels each option with its account type, and QBO still rejects
+       a bill posted to an unusable account.
+    """
+    rows = await qbo_query(session, "SELECT * FROM Account")
+    # QBO omits attributes that have no value, so a missing Active means active.
+    active = [a for a in rows if a.get("Active", True)]
+    expense = [a for a in active if (a.get("AccountType") or "").lower() in EXPENSE_ACCOUNT_TYPES]
+    if not expense and active:
+        log.warning(
+            "No QBO accounts matched %s; falling back to all %d active accounts. Types seen: %s",
+            sorted(EXPENSE_ACCOUNT_TYPES),
+            len(active),
+            sorted({a.get("AccountType") or "?" for a in active}),
+        )
+    return expense or active
