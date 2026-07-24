@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.db import AsyncSessionLocal
 from app.models.qbo_token import QboToken
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
             headers=_basic_auth_headers(),
         )
     if resp.status_code != 200:
+        # Intuit puts the reason (invalid_grant, etc.) in the body. The refresh
+        # path doesn't go through _request, so it needs its own log line.
+        log.warning("QBO token refresh failed (%s): %s", resp.status_code, resp.text[:2000])
         raise QboApiError(
             f"Token refresh failed ({resp.status_code})",
             status_code=resp.status_code,
@@ -165,17 +169,77 @@ async def ensure_fresh_token(session: AsyncSession) -> QboToken:
         return token
 
     log.info("Refreshing QBO access token (was to expire %s)", expires_at)
-    payload = await refresh_access_token(token.refresh_token)
-    token.access_token = payload["access_token"]
-    # Intuit may rotate the refresh token
-    token.refresh_token = payload.get("refresh_token", token.refresh_token)
-    token.expires_at = now + timedelta(seconds=int(payload.get("expires_in", 3600)))
+    try:
+        payload = await refresh_access_token(token.refresh_token)
+    except QboApiError as exc:
+        # 400/401 means Intuit rejected the refresh token itself — it is dead,
+        # not slow, and only an OAuth reconnect recovers it. Anything else
+        # (5xx, network) may be transient, so don't condemn the token for it.
+        if exc.status_code in (400, 401):
+            await _mark_refresh_token_expired()
+        raise
+
+    fields = _refreshed_token_fields(payload, token.refresh_token)
+    await _persist_rotated_token(fields)
+    # Mirror onto the request-session instance so the rest of this request uses
+    # the new access token. The durable write already happened above.
+    for name, value in fields.items():
+        setattr(token, name, value)
+    return token
+
+
+def _refreshed_token_fields(payload: dict[str, Any], previous_refresh: str) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    fields: dict[str, Any] = {
+        "access_token": payload["access_token"],
+        # Intuit may rotate the refresh token
+        "refresh_token": payload.get("refresh_token", previous_refresh),
+        "expires_at": now + timedelta(seconds=int(payload.get("expires_in", 3600))),
+    }
     if "x_refresh_token_expires_in" in payload:
-        token.refresh_expires_at = now + timedelta(
+        # The 100-day window is rolling — Intuit resets it on every refresh, so
+        # a connection in regular use should never need a manual reconnect.
+        fields["refresh_expires_at"] = now + timedelta(
             seconds=int(payload["x_refresh_token_expires_in"])
         )
-    await session.flush()
-    return token
+    return fields
+
+
+async def _persist_rotated_token(fields: dict[str, Any]) -> None:
+    """Commit refreshed tokens in their own transaction.
+
+    Intuit invalidates the previous refresh token the moment it issues a new
+    one, so the rotation has to survive whatever the calling request does next.
+    Staging it on the request session (``flush``) meant any later failure —
+    a QBO 5xx, a deploy restarting the container mid-request — rolled it back
+    via ``get_session``, leaving the stored refresh token permanently dead with
+    no way back except a manual OAuth reconnect. (REL-54)
+    """
+    async with AsyncSessionLocal() as write_session:
+        token = await write_session.get(QboToken, 1)
+        if token is None:  # pragma: no cover — the caller just loaded this row
+            return
+        for name, value in fields.items():
+            setattr(token, name, value)
+        await write_session.commit()
+
+
+async def _mark_refresh_token_expired() -> None:
+    """Record a refresh token Intuit rejected as expired, out of band.
+
+    ``/status`` derives ``needs_reconnect`` from ``refresh_expires_at``, so
+    without this the UI keeps reporting a healthy connection while every call
+    fails — which is exactly how a dead token went unnoticed for nine days.
+    Written in its own transaction because the caller is about to raise and
+    roll back. Self-healing: a later successful refresh resets the date from
+    Intuit's own ``x_refresh_token_expires_in``.
+    """
+    async with AsyncSessionLocal() as write_session:
+        token = await write_session.get(QboToken, 1)
+        if token is None:  # pragma: no cover — the caller just loaded this row
+            return
+        token.refresh_expires_at = datetime.now(UTC)
+        await write_session.commit()
 
 
 async def revoke_token(session: AsyncSession) -> None:
