@@ -50,6 +50,30 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.2.5",
+    date: "July 24, 2026",
+    headline: "Clearer coding, and posting stays with the admins",
+    summary:
+      "The cost code now shows its full description while you code, and posting to QuickBooks is limited to admins.",
+    sections: [
+      {
+        kind: "improved",
+        items: [
+          {
+            Icon: DocumentTextIcon,
+            title: "The full cost code, not just the number",
+            body: "When you're coding an invoice, each cost code now shows its full description right next to the number — in the dropdown and after you pick one — so you can see exactly what a code stands for at a glance.",
+          },
+          {
+            Icon: CheckBadgeIcon,
+            title: "Posting to QuickBooks is admin-only",
+            body: "Project managers code and approve invoices as usual, and posting to QuickBooks now stays with owners and admins. An approved invoice waits in the Ready to Post list for an admin to send it over.",
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: "0.2.4",
     date: "July 15, 2026",
     headline: "Your account, in your hands",
