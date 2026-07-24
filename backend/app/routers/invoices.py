@@ -465,7 +465,9 @@ async def post_invoice_to_qbo(
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    await _ensure_can_review(invoice, user, action="post to QBO")
+    # Posting to QBO is admin/owner-only. PMs code and approve; an approved
+    # invoice waits in the Ready-to-Post queue for an admin to post it.
+    await _require_admin(user, action="post invoices to QuickBooks")
     if invoice.status == InvoiceStatus.POSTED_TO_QBO:
         raise HTTPException(status_code=409, detail="Already posted to QBO")
     if invoice.status != InvoiceStatus.APPROVED:
@@ -497,11 +499,15 @@ async def approve_and_post(
     session: Annotated[AsyncSession, Depends(get_session)],
     background: BackgroundTasks,
 ):
-    """Convenience endpoint: approve + enqueue post in one call."""
+    """Convenience endpoint: approve + enqueue post in one call.
+
+    Admin/owner-only, because it posts. Members approve via /approve; posting
+    is left to an admin from the Ready-to-Post queue.
+    """
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    await _ensure_can_review(invoice, user, action="approve and post")
+    await _require_admin(user, action="post invoices to QuickBooks")
     _ensure_approvable(invoice)
     _ensure_postable(invoice)
 
